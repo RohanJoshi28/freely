@@ -127,7 +127,7 @@ function makeSTTParams(
   return {
     provider,
     selectedProvider: {
-      provider: provider.name as string,
+      provider: provider.id as string,
       variables: { API_KEY: "test-key" },
     },
     audio,
@@ -197,9 +197,9 @@ describe.each(providerCases)(
       // Parse the curl template to derive method/url/headers/form for mock
       mockCurl2Json.mockReturnValue({
         url: "https://api.example.com/transcribe",
+        origin: "https://api.example.com",
         method: "POST",
         header: { Authorization: "Bearer test-key" },
-        form: {},
         data: {},
         params: {},
       });
@@ -316,7 +316,7 @@ function loadFixtures(): Array<{ name: string; wavPath: string; expected: string
           const params: STTParams = {
             provider,
             selectedProvider: {
-              provider: provider.name as string,
+              provider: provider.id as string,
               variables,
             },
             audio,
@@ -330,7 +330,7 @@ function loadFixtures(): Array<{ name: string; wavPath: string; expected: string
           const wer = calculateWER(expected, result.text);
 
           console.log(
-            `[live] provider=${provider.name} fixture=${path.basename(wavPath)} wer=${wer.toFixed(3)} latency=${latencyMs}ms`
+            `[live] provider=${provider.id} fixture=${path.basename(wavPath)} wer=${wer.toFixed(3)} latency=${latencyMs}ms`
           );
 
           expect(wer).toBeLessThan(WER_THRESHOLD);

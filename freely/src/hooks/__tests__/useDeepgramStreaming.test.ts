@@ -295,7 +295,7 @@ describe("useDeepgramStreaming – PCM conversion", () => {
 describe("useDeepgramStreaming – transcript accumulation", () => {
   it("calls onInterimTranscript for non-final results", () => {
     const props = defaultProps();
-    const { result } = renderHook(() => useDeepgramStreaming(props));
+    renderHook(() => useDeepgramStreaming(props));
     act(() => latestWs().simulateOpen());
 
     act(() => latestWs().simulateMessage(resultsMessage("hello", false)));

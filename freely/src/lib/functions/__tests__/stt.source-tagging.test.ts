@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fetchSTT } from "../stt.function";
-import type { STTParams, AudioSource } from "../stt.function";
+import type { STTParams } from "../stt.function";
+import type { AudioSource } from "@/types/completion";
 import type { SpeakerLabel } from "@/types/completion";
 import type { ChatMessage } from "@/types/completion";
 import type { TYPE_PROVIDER } from "@/types";
