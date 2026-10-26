@@ -9,7 +9,12 @@ import { Message, TYPE_PROVIDER } from "@/types";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import curl2Json from "@bany/curl-to-json";
 import { getResponseSettings, RESPONSE_LENGTHS, LANGUAGES } from "@/lib";
-import { MARKDOWN_FORMATTING_INSTRUCTIONS } from "@/config/constants";
+import { getAssistantMode, getAssistantModeNotes } from "@/lib/storage";
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  MARKDOWN_FORMATTING_INSTRUCTIONS,
+} from "@/config/constants";
+import { getAssistantModeOption } from "@/config/assistant-modes.constants";
 import {
   freelyAgentOrchestrator,
   type AgentProviderId,
@@ -18,15 +23,30 @@ import {
 function buildEnhancedSystemPrompt(baseSystemPrompt?: string): string {
   const responseSettings = getResponseSettings();
   const prompts: string[] = [];
+  const modeOption = getAssistantModeOption(getAssistantMode());
 
-  if (baseSystemPrompt) {
+  if (modeOption) {
+    // Mode prompt defines the output format; a custom base prompt is kept as
+    // background context (e.g. the user's resume) rather than dropped.
+    prompts.push(modeOption.prompt);
+    const notes = getAssistantModeNotes()[modeOption.id]?.trim();
+    if (notes) {
+      prompts.push(`\n\nPrep notes from the user:\n${notes}\n\n`);
+    }
+    if (baseSystemPrompt && baseSystemPrompt !== DEFAULT_SYSTEM_PROMPT) {
+      prompts.push(
+        `\n\nBackground context and preferences from the user (use it, but the format above takes precedence):\n${baseSystemPrompt}\n\n`
+      );
+    }
+  } else if (baseSystemPrompt) {
     prompts.push(baseSystemPrompt);
   }
 
+  // Mode prompts set their own length, so skip the response-length limit
   const lengthOption = RESPONSE_LENGTHS.find(
     (l) => l.id === responseSettings.responseLength
   );
-  if (lengthOption?.prompt?.trim()) {
+  if (!modeOption && lengthOption?.prompt?.trim()) {
     prompts.push(lengthOption.prompt);
   }
 

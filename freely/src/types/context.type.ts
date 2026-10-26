@@ -1,10 +1,14 @@
 import { Dispatch, SetStateAction } from "react";
 import { ScreenshotConfig, TYPE_PROVIDER } from "@/types";
+import { AssistantMode } from "@/config";
 import { CursorType, CustomizableState } from "@/lib/storage";
 
 export type IContextType = {
   systemPrompt: string;
   setSystemPrompt: Dispatch<SetStateAction<string>>;
+  /** Active overlay mode (coffee chat / interview); "none" uses the system prompt as-is */
+  assistantMode: AssistantMode;
+  setAssistantMode: (mode: AssistantMode) => void;
   allAiProviders: TYPE_PROVIDER[];
   customAiProviders: TYPE_PROVIDER[];
   selectedAIProvider: {

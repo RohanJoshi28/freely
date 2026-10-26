@@ -1,6 +1,7 @@
 import {
   AI_PROVIDERS,
   AGENT_PROVIDERS,
+  AssistantMode,
   DEFAULT_SYSTEM_PROMPT,
   SPEECH_TO_TEXT_PROVIDERS,
   STORAGE_KEYS,
@@ -18,6 +19,8 @@ import {
   DEFAULT_CUSTOMIZABLE_STATE,
   CursorType,
   updateCursorType,
+  getAssistantMode,
+  setAssistantModeStorage,
 } from "@/lib/storage";
 import { IContextType, ScreenshotConfig, TYPE_PROVIDER } from "@/types";
 import curl2Json from "@bany/curl-to-json";
@@ -76,6 +79,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     safeLocalStorage.getItem(STORAGE_KEYS.SYSTEM_PROMPT) ||
       DEFAULT_SYSTEM_PROMPT
   );
+
+  const [assistantMode, setAssistantModeState] =
+    useState<AssistantMode>(getAssistantMode);
+
+  const setAssistantMode = (mode: AssistantMode) => {
+    setAssistantModeState(mode);
+    setAssistantModeStorage(mode);
+  };
 
   const [selectedAudioDevices, setSelectedAudioDevices] = useState<{
     input: { id: string; name: string };
@@ -658,6 +669,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const value: IContextType = {
     systemPrompt,
     setSystemPrompt,
+    assistantMode,
+    setAssistantMode,
     allAiProviders,
     customAiProviders,
     selectedAIProvider,

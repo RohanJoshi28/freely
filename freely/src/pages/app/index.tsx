@@ -4,6 +4,7 @@ import {
   Completion,
   AudioVisualizer,
   StatusIndicator,
+  ModeButtons,
 } from "./components";
 import { useApp } from "@/hooks";
 import { useApp as useAppContext } from "@/contexts";
@@ -49,6 +50,7 @@ const App = () => {
                 <AudioVisualizer isRecording={systemAudio?.capturing} />
               </div>
               <div className="flex !w-fit items-center gap-2">
+                <ModeButtons />
                 <StatusIndicator
                   setupRequired={systemAudio.setupRequired}
                   error={systemAudio.error}

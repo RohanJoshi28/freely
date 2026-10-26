@@ -11,6 +11,8 @@ import {
   CopyButton,
 } from "@/components";
 import { UseCompletionReturn } from "@/types";
+import { useApp } from "@/contexts";
+import { getAssistantModeOption } from "@/config";
 import { MessageHistory } from "./MessageHistory";
 
 export const Input = ({
@@ -35,6 +37,9 @@ export const Input = ({
   keepEngaged,
   setKeepEngaged,
 }: UseCompletionReturn & { isHidden: boolean }) => {
+  const { assistantMode } = useApp();
+  const modeOption = getAssistantModeOption(assistantMode);
+
   return (
     <div className="relative flex-1">
       <Popover
@@ -49,7 +54,7 @@ export const Input = ({
           <div className="relative select-none">
             <InputComponent
               ref={inputRef}
-              placeholder="Ask me anything..."
+              placeholder={modeOption?.placeholder ?? "Ask me anything..."}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
@@ -97,6 +102,7 @@ export const Input = ({
             <div className="flex flex-row gap-1 items-center">
               <h3 className="font-semibold text-xs select-none">
                 {keepEngaged ? "Conversation Mode" : "AI Response"}
+                {modeOption ? ` · ${modeOption.label}` : ""}
               </h3>
               <div className="text-[10px] text-muted-foreground/70">
                 (Use arrow keys to scroll)

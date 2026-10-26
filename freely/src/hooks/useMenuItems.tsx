@@ -35,6 +35,11 @@ export const useMenuItems = () => {
       href: "/chats",
     },
     {
+      icon: CoffeeIcon,
+      label: "Coffee chat & interview",
+      href: "/modes",
+    },
+    {
       icon: WandSparkles,
       label: "System prompts",
       href: "/system-prompts",
