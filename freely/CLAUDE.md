@@ -611,6 +611,71 @@ to low".
 
 
 
+### 11.9 Opinion questions get a view; wrap-up without email
+
+- "What's your view on the markets" got a behavioral-style structure: the
+  interview prompt only knew objective vs behavioral. It now names opinion
+  questions (markets, news, trends, "what do you think about…") as needing
+  an actual view the user can say. Also: that question was asked before
+  Ctrl+S existed, so the automatic answer (no web) handled it.
+- Rohan: "no need to write follow up email". The wrap-up is notes only.
+
+### 11.10 Key presses with no question → topic help
+
+Rohan: "if there is no specific question, it should just pull up information
+on the topic that is relevant to the discussion … anything that is not a
+question to be answered should pull up information that is relevant and will
+help me / augment me".
+
+- Ctrl+G/H/S append `ON_DEMAND_INSTRUCTION`: answer a pending question,
+  otherwise give information that helps in the current discussion. Appended to
+  forced segments, held fragments and the no-new-audio case.
+- The user's own in-progress speech is included: `MicListener` takes a
+  `flushRef` (`useSystemAudio.micFlushRef`); with `submitUserSpeechOnPause`,
+  `pause()`+`start()` submits the current mic segment, and the press waits
+  (≤4 s, 200 ms if nobody was speaking) for its transcription before flushing
+  system audio. Not verified by ear.
+- The search profile's instruction makes a WebSearch mandatory and comes
+  before the on-demand one: without that, one Ctrl+S test with no question
+  skipped searching.
+
+### 11.11 Ctrl+M more info (second panel)
+
+Rohan: "control m for more information on the topic beyond just what the AI
+said … displayed as a second chat in the window", then "25 seconds is way too
+much … maybe just 'more information'": "more information that could help
+augment the user's conversation".
+
+- `more_info` shortcut (Ctrl+M / Ctrl+Alt+M) → `useSystemAudio.runMoreInfo`:
+  flushes the mic, then calls the selected provider with the `more` profile
+  (`--tools WebSearch,WebFetch`, avoiding the full toolset's ToolSearch step)
+  and `MORE_INFO_INSTRUCTION` (1–2 WebSearches), with the copilot's latest
+  answer and up to 3 earlier entries as context.
+- `speech/MoreInfoPanel.tsx`: second column (46% width) beside the main panel,
+  one entry per press (ignored while one is loading), Clear button, cleared on
+  a new capture / conversation, never stored in the conversation.
+- Measured ~26 s (2 searches + ~500 words + CLI startup).
+
+### 11.12 Lean prompts (Rohan's rule)
+
+"for all of your responses, please don't give specifics like this it's a
+waste claude code is smart enough to deserve flexibility. Only the 2-4 web
+searches + web fetch is the crucial instruction … apply this logic for other
+prompts too." Every prompt in `assistant-modes.constants.ts` is now intent plus
+the rules that matter (never ask the user for anything, `[You said]` is
+context, `[Copilot action]` overrides, opinion questions get a view, search
+profiles must search). No output templates; don't add them back.
+
+### 11.13 `--strict-mcp-config` on every Claude call
+
+`claude -p` runs loaded the user's claude.ai connectors (Gmail, Claude Docs:
+38 tools, incl. send email) even with `--tools ""`. `run_claude` now always
+passes `--strict-mcp-config`: 0 MCP tools, ~1 s faster to first text in one
+measurement. `--bare` was rejected: it only accepts `ANTHROPIC_API_KEY`, not
+the OAuth login.
+
+### 11.7 Not verified by ear
+
 Same caveat as §8: nobody could play audio here. The judge was verified
 end-to-end against the live APIs (throwaway vitest with real keys); the
 Whisper/Metal path is verified only by the GitHub build compiling it.
