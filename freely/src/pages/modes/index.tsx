@@ -257,7 +257,7 @@ const Modes = () => {
   return (
     <PageLayout
       title="Coffee Chat & Interview"
-      description={`Press Ctrl+K for a coffee chat or Ctrl+I for an interview: it switches modes and starts listening in one go. Press Ctrl+G to get a response right away instead of waiting for a pause. While listening: ${helperKeys}. Press the same mode key again to stop and get notes plus a follow-up email. It never asks you for anything mid-conversation. Rebind the keys under Cursor & Shortcuts.`}
+      description={`Press Ctrl+K for a coffee chat or Ctrl+I for an interview: it switches modes and starts listening in one go. Respond right away instead of waiting for a pause: Ctrl+G with Sonnet (no tools, fastest), Ctrl+H with Haiku (can use tools and web search), Ctrl+S with Sonnet after a web search. Ctrl+T switches Claude's thinking between low (default) and high. While listening: ${helperKeys}. Press the same mode key again to stop and get notes plus a follow-up email. It never asks you for anything mid-conversation. Rebind the keys under Cursor & Shortcuts.`}
     >
       <LiveTranscriptionSettings />
       <TurnJudgeSettings />

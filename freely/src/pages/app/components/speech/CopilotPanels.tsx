@@ -5,14 +5,40 @@ import { CopilotHelperState, WrapUpState } from "@/hooks/useSystemAudio";
 
 const isMac = navigator.platform.toLowerCase().includes("mac");
 
+const key = (k: string) => (isMac ? `⌃${k}` : `Ctrl+Alt+${k}`);
+
 /** Hotkey hints shown while listening */
-export const CopilotHotkeys = () => (
+export const CopilotHotkeys = ({
+  thinkingLevel,
+}: {
+  thinkingLevel: "low" | "high";
+}) => (
   <div className="flex flex-wrap gap-x-3 gap-y-1 px-1">
+    {[
+      ["G", "Sonnet"],
+      ["H", "Haiku"],
+      ["S", "Search"],
+    ].map(([k, label]) => (
+      <span key={k} className="text-[9px] text-muted-foreground/70">
+        <span className="bg-muted/50 px-1 rounded mr-1">{key(k)}</span>
+        {label}
+      </span>
+    ))}
+    <span className="text-[9px] text-muted-foreground/70">
+      <span className="bg-muted/50 px-1 rounded mr-1">{key("T")}</span>
+      Thinking:{" "}
+      <span
+        className={
+          thinkingLevel === "high" ? "font-semibold text-primary" : undefined
+        }
+      >
+        {thinkingLevel}
+      </span>
+    </span>
     {COPILOT_ACTIONS.map((action, index) => (
       <span key={action.id} className="text-[9px] text-muted-foreground/70">
         <span className="bg-muted/50 px-1 rounded mr-1">
-          {isMac ? "⌃" : "Ctrl+Alt+"}
-          {index + 1}
+          {key(String(index + 1))}
         </span>
         {action.label}
       </span>

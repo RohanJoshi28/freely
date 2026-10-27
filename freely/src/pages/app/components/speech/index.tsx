@@ -74,6 +74,8 @@ export const SystemAudio = (props: useSystemAudioType) => {
     dismissHelper,
     wrapUp,
     dismissWrapUp,
+    thinkingLevel,
+    responseLabel,
   } = props;
 
   const { hasActiveLicense, supportsImages } = useApp();
@@ -362,7 +364,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                             transcript={transcript}
                             liveReady={liveTranscriptionReady}
                           />
-                          <CopilotHotkeys />
+                          <CopilotHotkeys thinkingLevel={thinkingLevel} />
                         </>
                       )}
 
@@ -389,6 +391,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       <ResultsSection
                         lastTranscription={lastTranscription}
                         lastAIResponse={lastAIResponse}
+                        responseLabel={responseLabel}
                         isAIProcessing={isAIProcessing}
                         conversation={conversation}
                         conversationMode={conversationMode}

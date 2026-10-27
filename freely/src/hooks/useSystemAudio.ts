@@ -17,6 +17,8 @@ import {
   AssistantMode,
   AssistantModeOption,
   COPILOT_ACTIONS,
+  GENERATION_PROFILES,
+  GenerationProfileId,
   CopilotActionId,
   DEFAULT_QUICK_ACTIONS,
   DEFAULT_SYSTEM_PROMPT,
@@ -39,6 +41,9 @@ import {
   getTurnJudgeEnabled,
   getTurnJudgeKeys,
   getWrapUpEnabled,
+  getThinkingLevel,
+  setThinkingLevel as storeThinkingLevel,
+  ThinkingLevel,
 } from "@/lib/storage";
 import { AudioSource, Message, SpeakerLabel } from "@/types/completion";
 
@@ -183,6 +188,10 @@ export function useSystemAudio() {
   const [liveTranscriptionReady, setLiveTranscriptionReady] = useState(false);
   const [helper, setHelper] = useState<CopilotHelperState | null>(null);
   const [wrapUp, setWrapUp] = useState<WrapUpState | null>(null);
+  const [thinkingLevel, setThinkingLevel] =
+    useState<ThinkingLevel>(getThinkingLevel);
+  /** Which profile produced the response on screen, e.g. "Haiku · low" */
+  const [responseLabel, setResponseLabel] = useState("");
 
   const [conversation, setConversation] = useState<ChatConversation>({
     id: "",
@@ -221,7 +230,9 @@ export function useSystemAudio() {
   const pendingFragmentRef = useRef("");
   const waitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAnsweredRef = useRef("");
-  const forceRespondRef = useRef(false);
+  /** Set by Ctrl+G/H/S: the next finished segment skips the judge */
+  const forceProfileRef = useRef<GenerationProfileId | null>(null);
+  const currentProfileRef = useRef<GenerationProfileId | null>(null);
   const turnQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   // Latest render values for listeners registered once
@@ -411,9 +422,15 @@ export function useSystemAudio() {
       transcription: string,
       prompt: string,
       previousMessages: Message[],
-      options: { recordUserMessage?: boolean } = {},
+      options: {
+        recordUserMessage?: boolean;
+        profileId?: GenerationProfileId;
+      } = {},
     ) => {
-      const { recordUserMessage = true } = options;
+      const { recordUserMessage = true, profileId = "sonnet" } = options;
+      const profile = GENERATION_PROFILES[profileId];
+      const effort = getThinkingLevel();
+      currentProfileRef.current = profileId;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -447,6 +464,7 @@ export function useSystemAudio() {
       try {
         setIsAIProcessing(true);
         setLastAIResponse("");
+        setResponseLabel(`${profile.label} · ${effort} thinking`);
         setError("");
 
         let fullResponse = "";
@@ -470,8 +488,16 @@ export function useSystemAudio() {
             selectedProvider: selectedAIProvider,
             systemPrompt: prompt,
             history: previousMessages,
-            userMessage: transcription,
+            userMessage: profile.instruction
+              ? `${transcription}\n\n${profile.instruction}`
+              : transcription,
             imagesBase64: [],
+            agentOptions: {
+              model: profile.model,
+              effort,
+              tools: profile.tools,
+              allowedTools: profile.allowedTools,
+            },
             signal: controller.signal,
           })) {
             if (controller.signal.aborted) break;
@@ -505,6 +531,7 @@ export function useSystemAudio() {
       } finally {
         if (abortControllerRef.current === controller) {
           setIsAIProcessing(false);
+          currentProfileRef.current = null;
         }
       }
     },
@@ -514,12 +541,16 @@ export function useSystemAudio() {
   processWithAIRef.current = processWithAI;
 
   /** Answer what the other person said with the selected AI provider */
-  const respondTo = (text: string) => {
+  const respondTo = (
+    text: string,
+    profileId: GenerationProfileId = "sonnet",
+  ) => {
     lastAnsweredRef.current = text;
     processWithAIRef.current(
       text,
       effectivePromptRef.current(),
       toHistory(conversationRef.current.messages),
+      { profileId },
     );
   };
 
@@ -545,10 +576,11 @@ export function useSystemAudio() {
       : text;
     pendingFragmentRef.current = "";
 
-    if (forceRespondRef.current || !getTurnJudgeEnabled()) {
-      forceRespondRef.current = false;
+    const forced = forceProfileRef.current;
+    if (forced || !getTurnJudgeEnabled()) {
+      forceProfileRef.current = null;
       upsertLine(lineId, { verdict: "respond" });
-      respondTo(merged);
+      respondTo(merged, forced ?? "sonnet");
       return;
     }
 
@@ -575,10 +607,11 @@ export function useSystemAudio() {
     console.log(`[turn judge] ${verdict} via ${source}: ${merged}`);
     upsertLine(lineId, { verdict });
 
-    // Ctrl+G pressed while the judge was thinking
-    if (forceRespondRef.current) {
-      forceRespondRef.current = false;
-      respondTo(merged);
+    // Ctrl+G/H/S pressed while the judge was thinking
+    const forcedLate = forceProfileRef.current;
+    if (forcedLate) {
+      forceProfileRef.current = null;
+      respondTo(merged, forcedLate);
       return;
     }
 
@@ -801,13 +834,16 @@ export function useSystemAudio() {
     return history;
   };
 
-  const handleQuickActionClick = async (action: string) => {
+  const handleQuickActionClick = async (
+    action: string,
+    profileId: GenerationProfileId = "sonnet",
+  ) => {
     setError("");
     await processWithAI(
       action,
       getEffectiveSystemPrompt(),
       historyWithLiveContext(),
-      { recordUserMessage: false },
+      { recordUserMessage: false, profileId },
     );
   };
 
@@ -847,6 +883,7 @@ export function useSystemAudio() {
         systemPrompt: getEffectiveSystemPrompt(),
         history: historyWithLiveContext(),
         userMessage: copilotActionMessage(action),
+        agentOptions: { tools: GENERATION_PROFILES.sonnet.tools },
         signal: controller.signal,
       })) {
         if (controller.signal.aborted) return;
@@ -904,6 +941,7 @@ export function useSystemAudio() {
         systemPrompt: getEffectiveSystemPrompt(),
         history: toHistory(messages),
         userMessage: wrapUpMessage(mode),
+        agentOptions: { tools: GENERATION_PROFILES.sonnet.tools },
         signal: controller.signal,
       })) {
         if (controller.signal.aborted) return;
@@ -988,7 +1026,7 @@ export function useSystemAudio() {
     clearWaitTimer();
     pendingFragmentRef.current = "";
     lastAnsweredRef.current = "";
-    forceRespondRef.current = false;
+    forceProfileRef.current = null;
     liveSegmentRef.current = null;
   };
 
@@ -1157,16 +1195,17 @@ export function useSystemAudio() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen("speech-flush-empty", () => {
-      forceRespondRef.current = false;
+      const profileId = forceProfileRef.current ?? "sonnet";
+      forceProfileRef.current = null;
       // A held fragment is exactly what "generate now" should answer
       if (pendingFragmentRef.current) {
         clearWaitTimer();
         const pending = pendingFragmentRef.current;
         pendingFragmentRef.current = "";
-        respondToRef.current(pending);
+        respondToRef.current(pending, profileId);
         return;
       }
-      quickActionRef.current(GENERATE_NOW_MESSAGE);
+      quickActionRef.current(GENERATE_NOW_MESSAGE, profileId);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -1175,18 +1214,30 @@ export function useSystemAudio() {
   const respondToRef = useRef(respondTo);
   respondToRef.current = respondTo;
 
+  // Ctrl+G Sonnet (no tools), Ctrl+H Haiku (tools), Ctrl+S Sonnet + search
   useEffect(() => {
-    globalShortcuts.registerCustomShortcutCallback("generate_now", async () => {
-      if (!capturing || isAIProcessing) return;
-      if (!isContinuousMode) {
+    const generateShortcuts: Record<string, GenerationProfileId> = {
+      generate_now: "sonnet",
+      generate_haiku: "haiku",
+      generate_search: "search",
+    };
+    Object.entries(generateShortcuts).forEach(([actionId, profileId]) => {
+      globalShortcuts.registerCustomShortcutCallback(actionId, async () => {
+        if (!capturing) return;
+        // Same profile already answering: let it finish. A different one
+        // (e.g. Haiku for speed, or search) replaces it.
+        if (isAIProcessing && currentProfileRef.current === profileId) return;
         // The flushed segment skips the turn judge
-        forceRespondRef.current = true;
-        await invoke("force_flush_speech");
-      } else if (isRecordingInContinuousMode) {
-        await manualStopAndSend();
-      } else {
-        await quickActionRef.current(GENERATE_NOW_MESSAGE);
-      }
+        forceProfileRef.current = profileId;
+        if (!isContinuousMode) {
+          await invoke("force_flush_speech");
+        } else if (isRecordingInContinuousMode) {
+          await manualStopAndSend();
+        } else {
+          forceProfileRef.current = null;
+          await quickActionRef.current(GENERATE_NOW_MESSAGE, profileId);
+        }
+      });
     });
   }, [
     capturing,
@@ -1195,6 +1246,16 @@ export function useSystemAudio() {
     isRecordingInContinuousMode,
     manualStopAndSend,
   ]);
+
+  // Ctrl+T: thinking effort low <-> high (applies to every later call)
+  useEffect(() => {
+    globalShortcuts.registerCustomShortcutCallback("toggle_thinking", () => {
+      const next: ThinkingLevel =
+        getThinkingLevel() === "high" ? "low" : "high";
+      storeThinkingLevel(next);
+      setThinkingLevel(next);
+    });
+  }, []);
 
   // Helper hotkeys (Ctrl+1–4)
   useEffect(() => {
@@ -1545,6 +1606,8 @@ export function useSystemAudio() {
     // Live transcript, hotkey helpers and wrap-up
     transcript,
     liveTranscriptionReady,
+    thinkingLevel,
+    responseLabel,
     helper,
     dismissHelper,
     runCopilotAction,

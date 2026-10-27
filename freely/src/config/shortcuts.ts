@@ -77,11 +77,41 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
     id: "generate_now",
     name: "Generate Now",
     description:
-      "While listening, respond immediately instead of waiting for a pause",
+      "While listening, respond now with Sonnet (no tools, fastest) instead of waiting for a pause",
     defaultKey: {
       macos: "ctrl+g",
       windows: "ctrl+alt+g",
       linux: "ctrl+alt+g",
+    },
+  },
+  {
+    id: "generate_haiku",
+    name: "Generate with Haiku",
+    description: "While listening, respond now with Haiku (faster model, can use tools and web search)",
+    defaultKey: {
+      macos: "ctrl+h",
+      windows: "ctrl+alt+h",
+      linux: "ctrl+alt+h",
+    },
+  },
+  {
+    id: "generate_search",
+    name: "Generate with Search",
+    description: "While listening, search the web first, then respond with Sonnet",
+    defaultKey: {
+      macos: "ctrl+s",
+      windows: "ctrl+alt+s",
+      linux: "ctrl+alt+s",
+    },
+  },
+  {
+    id: "toggle_thinking",
+    name: "Toggle Thinking",
+    description: "Switch Claude's thinking effort between low and high",
+    defaultKey: {
+      macos: "ctrl+t",
+      windows: "ctrl+alt+t",
+      linux: "ctrl+alt+t",
     },
   },
   {

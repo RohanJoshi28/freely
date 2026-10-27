@@ -28,6 +28,7 @@ export const STORAGE_KEYS = {
   TURN_JUDGE_ENABLED: "turn_judge_enabled",
   TURN_JUDGE_KEYS: "turn_judge_keys",
   WRAP_UP_ENABLED: "wrap_up_enabled",
+  THINKING_LEVEL: "thinking_level",
 } as const;
 
 // Max number of files that can be attached to a message

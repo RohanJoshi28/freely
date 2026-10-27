@@ -9,7 +9,12 @@ import { Message, TYPE_PROVIDER } from "@/types";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import curl2Json from "@bany/curl-to-json";
 import { getResponseSettings, RESPONSE_LENGTHS, LANGUAGES } from "@/lib";
-import { getAssistantMode, getAssistantModeNotes } from "@/lib/storage";
+import {
+  ThinkingLevel,
+  getAssistantMode,
+  getAssistantModeNotes,
+  getThinkingLevel,
+} from "@/lib/storage";
 import {
   DEFAULT_SYSTEM_PROMPT,
   MARKDOWN_FORMATTING_INSTRUCTIONS,
@@ -76,6 +81,16 @@ export async function* fetchAIResponse(params: {
   signal?: AbortSignal;
   /** Conversation ID for session continuity across mic presses */
   conversationId?: string;
+  /**
+   * Claude Code only: override the model (e.g. "haiku") and tool access for
+   * this call. Thinking effort defaults to the user's Freely setting.
+   */
+  agentOptions?: {
+    model?: string;
+    effort?: ThinkingLevel;
+    tools?: string;
+    allowedTools?: string[];
+  };
 }): AsyncIterable<string> {
   try {
     const {
@@ -87,6 +102,7 @@ export async function* fetchAIResponse(params: {
       imagesBase64 = [],
       signal,
       conversationId,
+      agentOptions,
     } = params;
 
     // Check if already aborted
@@ -107,6 +123,7 @@ export async function* fetchAIResponse(params: {
         selectedProvider.variables?.api_key;
 
       const model =
+        agentOptions?.model ||
         selectedProvider.variables?.MODEL ||
         selectedProvider.variables?.model;
 
@@ -131,6 +148,13 @@ export async function* fetchAIResponse(params: {
         sessionId: conversationId,
         apiKey,
         model,
+        claudeOptions: {
+          // Always pass an effort: otherwise the CLI inherits the user's
+          // global setting (xhigh here), which is slow for live answers
+          effort: agentOptions?.effort ?? getThinkingLevel(),
+          tools: agentOptions?.tools,
+          allowedTools: agentOptions?.allowedTools,
+        },
         signal,
       });
       return;

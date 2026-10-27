@@ -144,3 +144,15 @@ export const getWrapUpEnabled = (): boolean =>
 export const setWrapUpEnabled = (enabled: boolean): void => {
   safeLocalStorage.setItem(STORAGE_KEYS.WRAP_UP_ENABLED, String(enabled));
 };
+
+/** Claude Code thinking effort for live answers. Ctrl+T toggles; default low. */
+export type ThinkingLevel = "low" | "high";
+
+export const getThinkingLevel = (): ThinkingLevel =>
+  safeLocalStorage.getItem(STORAGE_KEYS.THINKING_LEVEL) === "high"
+    ? "high"
+    : "low";
+
+export const setThinkingLevel = (level: ThinkingLevel): void => {
+  safeLocalStorage.setItem(STORAGE_KEYS.THINKING_LEVEL, level);
+};

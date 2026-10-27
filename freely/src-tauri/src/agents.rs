@@ -134,6 +134,14 @@ pub struct AgentPayload {
     /// When set, it is prepended to the user prompt before passing to the CLI.
     #[serde(rename = "systemPrompt")]
     pub system_prompt: Option<String>,
+    /// Thinking effort (`--effort`): low, medium, high, xhigh or max. Without
+    /// it the CLI uses the user's global setting.
+    pub effort: Option<String>,
+    /// Built-in tools to offer (`--tools`): "" for none, "default" for all.
+    pub tools: Option<String>,
+    /// Tools pre-approved for this non-interactive run (`--allowedTools`).
+    #[serde(rename = "allowedTools")]
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 // ============================================================================
@@ -449,6 +457,23 @@ pub async fn run_claude(
 
     if let Some(ref perm) = payload.permission_mode {
         cmd.arg("--allowedTools").arg(perm);
+    }
+
+    if let Some(ref effort) = payload.effort {
+        if !["low", "medium", "high", "xhigh", "max"].contains(&effort.as_str()) {
+            return Err(format!("Invalid effort level: {}", effort));
+        }
+        cmd.arg("--effort").arg(effort);
+    }
+
+    if let Some(ref tools) = payload.tools {
+        cmd.arg("--tools").arg(tools);
+    }
+
+    if let Some(ref allowed) = payload.allowed_tools {
+        if !allowed.is_empty() {
+            cmd.arg("--allowedTools").args(allowed);
+        }
     }
 
     cmd.stdout(Stdio::piped())

@@ -12,7 +12,7 @@
  * - Actual CLI execution happens via Tauri invoke → Rust sidecar
  */
 
-import { FreelyClaudeTool } from './claude/freely-claude-tool.js';
+import { FreelyClaudeTool, type ClaudeCliOptions } from './claude/freely-claude-tool.js';
 import { FreelyCodexTool } from './codex/freely-codex-tool.js';
 import { FreelyGeminiTool } from './gemini/freely-gemini-tool.js';
 import {
@@ -77,6 +77,8 @@ export interface AgentExecuteParams {
   apiKey?: string;
   /** Model override (e.g. "claude-sonnet-4-5-20250514", "haiku") — passed as --model to CLI */
   model?: string;
+  /** Claude Code only: thinking effort and tool access for this call */
+  claudeOptions?: ClaudeCliOptions;
   signal?: AbortSignal;
 }
 
@@ -199,7 +201,7 @@ export class FreelyAgentOrchestrator {
       : params.userMessage;
     try {
       this.claudeTool
-        .executePromptWithStreaming(sessionId, prompt, undefined, undefined, callbacks, undefined, params.model, params.systemPrompt)
+        .executePromptWithStreaming(sessionId, prompt, undefined, undefined, callbacks, undefined, params.model, params.systemPrompt, params.claudeOptions)
         .then((result) => {
           if (result.error) finish(new Error(result.error));
           else finish();

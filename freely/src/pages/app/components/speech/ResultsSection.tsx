@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 type Props = {
   lastTranscription: string;
   lastAIResponse: string;
+  /** Which model/profile produced the response, e.g. "Haiku · low thinking" */
+  responseLabel?: string;
   isAIProcessing: boolean;
   conversation: ChatConversation;
   conversationMode: boolean;
@@ -15,6 +17,7 @@ type Props = {
 export const ResultsSection = ({
   lastTranscription,
   lastAIResponse,
+  responseLabel,
   isAIProcessing,
   conversation,
   conversationMode,
@@ -39,6 +42,11 @@ export const ResultsSection = ({
           <h4 className="text-xs font-medium">
             {conversationMode ? "Conversation" : "AI Response"}
           </h4>
+          {responseLabel && (
+            <span className="text-[9px] text-muted-foreground">
+              {responseLabel}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 select-none">
           <span className="text-[9px] text-muted-foreground/50 bg-muted/50 px-1 rounded">

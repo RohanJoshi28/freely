@@ -56,6 +56,19 @@ interface ClaudeInvokePayload {
   agentSessionId?: string;
   /** Optional system prompt prepended to the user prompt for per-conversation context */
   systemPrompt?: string;
+  /** --effort (thinking level); omitted = the user's global Claude Code setting */
+  effort?: string;
+  /** --tools: "" for none, "default" for all */
+  tools?: string;
+  /** --allowedTools: pre-approved tools for this non-interactive run */
+  allowedTools?: string[];
+}
+
+/** Per-call Claude CLI options (thinking effort and tool access) */
+export interface ClaudeCliOptions {
+  effort?: string;
+  tools?: string;
+  allowedTools?: string[];
 }
 
 /**
@@ -141,7 +154,8 @@ export class FreelyClaudeTool {
     streamingCallbacks?: StreamingCallbacks,
     _abortController?: AbortController,
     model?: string,
-    systemPrompt?: string
+    systemPrompt?: string,
+    cliOptions?: ClaudeCliOptions
   ): Promise<FreelyExecutionResult> {
     const userMessageId = toMessageID(generateId());
 
@@ -193,6 +207,7 @@ export class FreelyClaudeTool {
         model,
         agentSessionId,
         systemPrompt,
+        ...cliOptions,
       };
 
       // Listen for real-time streaming events from the Rust backend

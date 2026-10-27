@@ -135,3 +135,47 @@ export const wrapUpMessage = (mode: Exclude<AssistantMode, "none">): string =>
 **How it went** — for each question where my own answer is in the conversation ("[You said]:" lines), one line on what landed and one concrete improvement. Skip questions where my answer wasn't captured.
 **Prep next** — 2–4 bullets: topics to study or stories to prepare for the next round, based on what they focused on.
 **Thank-you email** — a short email (under 120 words) with a subject line that thanks the interviewer and references one or two specific topics from the conversation. Sign it as "[Your name]".`;
+
+/** How a response is generated: which Claude model and which tools it may use */
+export type GenerationProfileId = "sonnet" | "haiku" | "search";
+
+export interface GenerationProfile {
+  id: GenerationProfileId;
+  label: string;
+  /** Claude Code model alias; undefined = the provider's selected model */
+  model?: string;
+  /** Claude Code --tools: "" for none (fastest), "default" for the full set */
+  tools: string;
+  /** Pre-approved so they run without a permission prompt */
+  allowedTools?: string[];
+  /** Appended to the request (not stored in the conversation) */
+  instruction?: string;
+}
+
+// Web and read-only tools. Tools that edit files or run commands stay
+// available but unapproved, so a non-interactive run can't use them.
+const LOOKUP_TOOLS = ["WebSearch", "WebFetch", "Read", "Grep", "Glob"];
+
+export const GENERATION_PROFILES: Record<
+  GenerationProfileId,
+  GenerationProfile
+> = {
+  // Ctrl+G and every automatic answer: no tools, fastest
+  sonnet: { id: "sonnet", label: "Sonnet", tools: "" },
+  // Ctrl+H
+  haiku: {
+    id: "haiku",
+    label: "Haiku",
+    model: "haiku",
+    tools: "default",
+    allowedTools: LOOKUP_TOOLS,
+  },
+  // Ctrl+S
+  search: {
+    id: "search",
+    label: "Sonnet + web search",
+    tools: "default",
+    allowedTools: LOOKUP_TOOLS,
+    instruction: `(Search first: before answering, use WebSearch, and WebFetch if you need a page, to look up whatever makes the answer more accurate or current: the company, the person, recent news, products, technical details, numbers. Keep it to 1–3 quick searches. Then respond in the usual format, and end with a one-line **Sources:** list of links.)`,
+  },
+};

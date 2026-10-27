@@ -575,7 +575,41 @@ listening stops, and saves it to the conversation as an assistant message.
 - `useSystemAudio` listeners now go through refs (no stale closures; they
   register once).
 
-### 11.7 Not verified by ear
+### 11.8 Model / tools / thinking per key (Rohan's spec, same session)
+
+"Ctrl+G should be generate using sonnet. Control H should be generate using
+haiku (faster). ctrl+s should use google search first before answering using
+sonnet", "It should give Claude the full toolset for search and for Haiku but
+for Ctrl+G it should limit to no search. Also thinking should be low", "control
+t should change thinking to high and pressing it again should change it back
+to low".
+
+- `GENERATION_PROFILES` (`assistant-modes.constants.ts`): `sonnet` (Ctrl+G and
+  every automatic answer, helper and wrap-up: `--tools ""`), `haiku` (Ctrl+H:
+  `--model haiku --tools default`), `search` (Ctrl+S: selected model,
+  `--tools default`, plus an instruction to search 1–3 times first and cite
+  sources). Both tool profiles pre-approve WebSearch, WebFetch, Read, Grep,
+  Glob via `--allowedTools`; other tools exist but are unapproved, so a `-p`
+  run can't edit files or run commands.
+- Rust `run_claude` gained `effort`, `tools`, `allowedTools` payload fields
+  (`--effort`, `--tools`, `--allowedTools`), threaded through
+  `freely-claude-tool.ts` (`ClaudeCliOptions`), `orchestrator.ts`
+  (`claudeOptions`) and `fetchAIResponse({ agentOptions })`.
+- **Thinking effort was xhigh before**: Freely passed no `--effort`, so the CLI
+  used Rohan's global `~/.claude/settings.json` (`effortLevel: "xhigh"`). Now
+  every Claude Code call passes `--effort` from `thinking_level` (localStorage,
+  default `low`); Ctrl+T (`toggle_thinking`) flips low/high; the overlay shows
+  it, and the response header shows e.g. "Haiku · low thinking".
+- Pressing a generate key while a *different* profile is answering replaces
+  it; the same profile is a no-op.
+- "Google search": Claude Code's WebSearch is Anthropic's search, not Google.
+- Measured (claude 2.1.285, 3 runs, interview question): Sonnet no-tools
+  medium/low ≈ 0.8–3 s to first text, 4–7 s total; Freely's old call
+  (inherits xhigh + full tools) 2.1 s / 5.9 s; Haiku ≈ 1.1–1.3 s / 6 s.
+  Ctrl+S with the full toolset ≈ 25 s (an extra ToolSearch round-trip loads the
+  deferred WebSearch tool); with only WebSearch/WebFetch ≈ 17–18 s.
+
+
 
 Same caveat as §8: nobody could play audio here. The judge was verified
 end-to-end against the live APIs (throwaway vitest with real keys); the
