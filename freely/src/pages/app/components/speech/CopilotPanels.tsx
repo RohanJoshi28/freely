@@ -87,7 +87,7 @@ export const HelperCard = ({
   </div>
 );
 
-/** Notes and a follow-up email written when listening stops */
+/** Notes written when listening stops */
 export const WrapUpPanel = ({ wrapUp }: { wrapUp: WrapUpState }) => (
   <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-2">
     <div className="flex items-center justify-between">
@@ -103,7 +103,7 @@ export const WrapUpPanel = ({ wrapUp }: { wrapUp: WrapUpState }) => (
       <div className="flex items-center gap-2 py-2">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
         <span className="text-xs text-muted-foreground">
-          Writing notes and a follow-up email…
+          Writing notes…
         </span>
       </div>
     ) : (

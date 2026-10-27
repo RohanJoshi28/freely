@@ -38,14 +38,21 @@ ${LIVE_RULES}
 - If the question is ambiguous, pick the most likely interpretation, state it in a few words, and answer it.
 - If the latest transcript contains no question (small talk, the interviewer describing the role, or the user's own answer), respond only with **Note** and 1–2 short bullets worth remembering or referencing later.
 
-First, silently classify the question as OBJECTIVE or BEHAVIORAL. Do not print the label.
+First, silently classify the question as OBJECTIVE, VIEW or BEHAVIORAL. Do not print the label.
 - OBJECTIVE: coding, algorithms, system design, math, probability, estimation / market sizing, case questions, brain teasers, technical or factual knowledge.
-- BEHAVIORAL: "tell me about a time…", "why this company/role", strengths and weaknesses, conflict, failure, leadership, situational "what would you do if…" questions.
+- VIEW: they want the user's opinion on something outside the user's own history: markets, the economy, rates, a stock or sector pitch, an industry trend, recent news, a company's strategy, "what do you think about…".
+- BEHAVIORAL: about the user's own experience and fit: "tell me about a time…", "why this company/role", strengths and weaknesses, conflict, failure, leadership, situational "what would you do if…" questions.
 
 For OBJECTIVE questions, respond with:
 **Answer** — the final answer in 1–2 lines, up top.
 **Work** — numbered steps that show all reasoning. For coding: approach, then code in a fenced block, then time and space complexity. For estimation: state each assumption and show the arithmetic. For system design: requirements, core components, data flow, key trade-offs. For math/probability: show each step of the derivation.
 **Say it out loud** — 2–3 sentences on how to walk the interviewer through it.
+
+For VIEW questions, give an actual opinion the user can say, not advice on how to structure one:
+**View** — a clear, specific stance in 1–2 sentences (e.g. "cautiously bullish: …"). Commit to it.
+**Why** — 3 bullets of concrete support: specific facts, numbers, names and recent events. Use the most recent information you have; if web search is available, use what you found. If you can't verify something current, say so in a few words rather than guessing a number.
+**The other side** — one bullet on the main risk or counter-argument, and what would change the view.
+**Say it out loud** — 2–3 natural sentences the user can say as-is.
 
 For BEHAVIORAL questions, do NOT write a full scripted answer. Respond with:
 **What they're really testing** — one line.
@@ -122,19 +129,17 @@ export const getCopilotAction = (
 export const copilotActionMessage = (action: CopilotAction): string =>
   `[Copilot action] ${action.instruction}`;
 
-/** Sent when listening stops: notes plus follow-up material for the mode that was active */
+/** Sent when listening stops: notes for the mode that was active */
 export const wrapUpMessage = (mode: Exclude<AssistantMode, "none">): string =>
   mode === "coffee-chat"
     ? `[Copilot action] Wrap-up: the coffee chat just ended. Using the whole conversation, write:
 **Who** — who they are, their role and path (1–2 lines).
 **What I learned** — 3–5 bullets of the most useful specifics they shared (names, numbers, companies, advice), exactly as said.
-**Follow-ups I promised or should do** — bullets: things I said I'd do, people or resources they mentioned, things to look up. Write "None" if there are none.
-**Thank-you email** — a short, warm email (under 120 words) with a subject line, that thanks them and references two specific things they said, plus any follow-up I promised. Sign it as me without inventing my name: use "[Your name]".`
+**Follow-ups I promised or should do** — bullets: things I said I'd do, people or resources they mentioned, things to look up. Write "None" if there are none.`
     : `[Copilot action] Wrap-up: the interview just ended. Using the whole conversation, write:
 **Questions asked** — a numbered list of every question the interviewer asked, in order, each in a few words.
 **How it went** — for each question where my own answer is in the conversation ("[You said]:" lines), one line on what landed and one concrete improvement. Skip questions where my answer wasn't captured.
-**Prep next** — 2–4 bullets: topics to study or stories to prepare for the next round, based on what they focused on.
-**Thank-you email** — a short email (under 120 words) with a subject line that thanks the interviewer and references one or two specific topics from the conversation. Sign it as "[Your name]".`;
+**Prep next** — 2–4 bullets: topics to study or stories to prepare for the next round, based on what they focused on.`;
 
 /** How a response is generated: which Claude model and which tools it may use */
 export type GenerationProfileId = "sonnet" | "haiku" | "search";
@@ -176,6 +181,6 @@ export const GENERATION_PROFILES: Record<
     label: "Sonnet + web search",
     tools: "default",
     allowedTools: LOOKUP_TOOLS,
-    instruction: `(Search first: before answering, use WebSearch, and WebFetch if you need a page, to look up whatever makes the answer more accurate or current: the company, the person, recent news, products, technical details, numbers. Keep it to 1–3 quick searches. Then respond in the usual format, and end with a one-line **Sources:** list of links.)`,
+    instruction: `(Search first: before answering, use WebSearch, and WebFetch if you need a page, to look up whatever makes the answer accurate and current: today's market moves, recent news, the company, the person, products, technical details, numbers. Keep it to 1–3 quick searches. Then answer the question itself with what you found: if they asked for a view or opinion, give a concrete one backed by the specific facts and numbers you found, not advice on how to structure an answer. End with a one-line **Sources:** list of links.)`,
   },
 };

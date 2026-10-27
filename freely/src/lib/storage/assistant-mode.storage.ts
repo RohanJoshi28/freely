@@ -137,7 +137,7 @@ export const setTurnJudgeKey = (
   );
 };
 
-/** Notes and a follow-up email when a mode's listening stops. Defaults to on. */
+/** Notes when a mode stops listening. Defaults to on. */
 export const getWrapUpEnabled = (): boolean =>
   getBool(STORAGE_KEYS.WRAP_UP_ENABLED, true);
 

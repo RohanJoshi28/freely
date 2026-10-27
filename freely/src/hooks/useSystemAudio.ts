@@ -918,7 +918,7 @@ export function useSystemAudio() {
     setHelper(null);
   }, []);
 
-  /** Notes + follow-up email for the conversation that just ended */
+  /** Notes for the conversation that just ended */
   const runWrapUp = async (
     mode: Exclude<AssistantMode, "none">,
     messages: ChatMessage[],
