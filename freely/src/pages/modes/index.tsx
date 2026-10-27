@@ -1,8 +1,13 @@
 import { useState } from "react";
-import { Header, Label, Textarea } from "@/components";
+import { Header, Label, Switch, Textarea } from "@/components";
 import { PageLayout } from "@/layouts";
 import { ASSISTANT_MODES, AssistantModeOption } from "@/config";
-import { getAssistantModeNotes, setAssistantModeNote } from "@/lib/storage";
+import {
+  getAssistantModeNotes,
+  getMicEnabled,
+  setAssistantModeNote,
+  setMicEnabled,
+} from "@/lib/storage";
 
 const MODE_DESCRIPTIONS: Record<AssistantModeOption["id"], string> = {
   "coffee-chat":
@@ -41,12 +46,37 @@ const ModeNotes = ({ mode }: { mode: AssistantModeOption }) => {
   );
 };
 
+const MicToggle = () => {
+  const [enabled, setEnabled] = useState(getMicEnabled);
+  return (
+    <div className="flex items-center justify-between p-4 border rounded-xl">
+      <div>
+        <Label className="text-sm font-medium">Also listen to my microphone</Label>
+        <p className="text-xs text-muted-foreground mt-1">
+          Your own words are added as context so it knows what you already
+          asked or answered. It never responds to them. Wear headphones for
+          best results; without them, your mic also hears the other person.
+        </p>
+      </div>
+      <Switch
+        checked={enabled}
+        onCheckedChange={(checked) => {
+          setEnabled(checked);
+          setMicEnabled(checked);
+        }}
+        aria-label="Toggle microphone listening"
+      />
+    </div>
+  );
+};
+
 const Modes = () => {
   return (
     <PageLayout
       title="Coffee Chat & Interview"
       description="Press Ctrl+K for a coffee chat or Ctrl+I for an interview: it switches modes and starts listening in one go. Press Ctrl+G to get a response right away instead of waiting for a pause. Press the same mode keys again to stop. It responds on its own and never asks you for anything mid-conversation. Rebind the keys under Cursor & Shortcuts."
     >
+      <MicToggle />
       {ASSISTANT_MODES.map((mode) => (
         <ModeNotes key={mode.id} mode={mode} />
       ))}

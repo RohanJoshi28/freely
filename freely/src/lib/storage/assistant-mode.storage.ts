@@ -47,3 +47,14 @@ export const setAssistantModeNote = (
     JSON.stringify({ ...getAssistantModeNotes(), [mode]: note })
   );
 };
+
+/**
+ * Whether to also listen to the microphone during system audio capture so the
+ * user's own words become context. Defaults to on.
+ */
+export const getMicEnabled = (): boolean =>
+  safeLocalStorage.getItem(STORAGE_KEYS.ASSISTANT_MIC_ENABLED) !== "false";
+
+export const setMicEnabled = (enabled: boolean): void => {
+  safeLocalStorage.setItem(STORAGE_KEYS.ASSISTANT_MIC_ENABLED, String(enabled));
+};

@@ -18,7 +18,7 @@ import {
   generateConversationId,
   generateMessageId,
 } from "@/lib";
-import { Message } from "@/types/completion";
+import { Message, SpeakerLabel } from "@/types/completion";
 
 // VAD Configuration interface matching Rust
 export interface VadConfig {
@@ -68,6 +68,22 @@ export type useSystemAudioType = ReturnType<typeof useSystemAudio>;
 const GENERATE_NOW_MESSAGE =
   "(No new audio. The user asked for a response right now: respond to the most recent question or topic in the conversation so far.)";
 
+/** Conversation messages as AI history, marking the user's own mic lines */
+const toHistory = (
+  messages: Array<{
+    role: Message["role"];
+    content: string;
+    speakerLabel?: SpeakerLabel;
+  }>
+): Message[] =>
+  messages.map((msg) => ({
+    role: msg.role,
+    content:
+      msg.role === "user" && msg.speakerLabel === "user"
+        ? `[You said]: ${msg.content}`
+        : msg.content,
+  }));
+
 export function useSystemAudio() {
   const { resizeWindow } = useWindowResize();
   const globalShortcuts = useGlobalShortcuts();
@@ -113,6 +129,9 @@ export function useSystemAudio() {
   } = useApp();
   const abortControllerRef = useRef<AbortController | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Whether the other person is talking right now (system audio VAD)
+  const systemSpeechActiveRef = useRef(false);
+  const lastSystemSpeechStartRef = useRef(0);
   const isSavingRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -201,6 +220,7 @@ export function useSystemAudio() {
 
         // Speech discarded (too short)
         discardedUnlisten = await listen("speech-discarded", (event) => {
+          systemSpeechActiveRef.current = false;
           const reason = event.payload as string;
           console.log("Speech discarded:", reason);
           // Don't show error - this is expected behavior
@@ -229,6 +249,7 @@ export function useSystemAudio() {
       try {
         speechUnlisten = await listen("speech-detected", async (event) => {
           try {
+            systemSpeechActiveRef.current = false;
             if (!capturing) return;
 
             const base64Audio = event.payload as string;
@@ -286,9 +307,7 @@ export function useSystemAudio() {
                   ? systemPrompt || DEFAULT_SYSTEM_PROMPT
                   : contextContent || DEFAULT_SYSTEM_PROMPT;
 
-                const previousMessages = conversation.messages.map((msg) => {
-                  return { role: msg.role, content: msg.content };
-                });
+                const previousMessages = toHistory(conversation.messages);
 
                 await processWithAI(
                   transcription,
@@ -426,9 +445,7 @@ export function useSystemAudio() {
       }
     }
 
-    const previousMessages = updatedMessages.map((msg) => {
-      return { role: msg.role, content: msg.content };
-    });
+    const previousMessages = toHistory(updatedMessages);
 
     await processWithAI(action, effectiveSystemPrompt, previousMessages);
   };
@@ -826,6 +843,46 @@ export function useSystemAudio() {
     conversation.updatedAt,
   ]);
 
+  // Track when the other person starts talking (used to filter mic bleed)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("speech-start", () => {
+      systemSpeechActiveRef.current = true;
+      lastSystemSpeechStartRef.current = Date.now();
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
+
+  // Mic: the user's own words become context and never trigger a response.
+  // Segments overlapping the other person's speech are dropped: without
+  // headphones the mic hears the speakers too, and system audio has that.
+  const addUserUtterance = useCallback((text: string, startedAt: number) => {
+    if (
+      systemSpeechActiveRef.current ||
+      lastSystemSpeechStartRef.current >= startedAt
+    ) {
+      return;
+    }
+    const timestamp = Date.now();
+    setConversation((prev) => ({
+      ...prev,
+      messages: [
+        {
+          id: generateMessageId("user", timestamp),
+          role: "user" as const,
+          content: text,
+          timestamp,
+          audioSource: "mic" as const,
+          speakerLabel: "user" as const,
+        },
+        ...prev.messages,
+      ],
+      updatedAt: timestamp,
+    }));
+  }, []);
+
   const startNewConversation = useCallback(() => {
     setConversation({
       id: generateConversationId("sysaudio"),
@@ -943,6 +1000,7 @@ export function useSystemAudio() {
 
   return {
     capturing,
+    addUserUtterance,
     isProcessing,
     isAIProcessing,
     lastTranscription,

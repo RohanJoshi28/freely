@@ -22,6 +22,7 @@ export const STORAGE_KEYS = {
   SUPPORTS_IMAGES: "supports_images",
   ASSISTANT_MODE: "assistant_mode",
   ASSISTANT_MODE_NOTES: "assistant_mode_notes",
+  ASSISTANT_MIC_ENABLED: "assistant_mic_enabled",
 } as const;
 
 // Max number of files that can be attached to a message
