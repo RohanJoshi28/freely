@@ -195,3 +195,13 @@ export const ON_DEMAND_INSTRUCTION = `[Copilot action] The user pressed a key as
 **Topic** — what's being discussed, in a few words.
 **Useful to know** — 3–5 bullets of specific, accurate facts, numbers, names, recent developments or concepts that would strengthen what the user is saying or about to say. Prioritise what they can use in the next minute.
 **Bring up** — 1–2 sharp points or questions the user could say next, ready to say out loud.`;
+
+/** Ctrl+M: go deeper on the current topic, shown in its own panel */
+export const DEEP_DIVE_INSTRUCTION = `[Copilot action] Deep dive: the user wants to go deeper on the topic being discussed right now (or the thing they just said), well beyond what the copilot already said. Your first action must be WebSearch: run 2–4 searches for richer and more current information, and WebFetch a page if a detail matters. Then respond with:
+### <the topic, in a few words>
+**Background** — 2–3 sentences of context: what it is, why it matters now.
+**Key details** — 5–8 bullets of specific facts, numbers, history, how it works, the main players and recent developments that the copilot has NOT already covered.
+**Nuances & debates** — 2–3 bullets: where experts disagree, common misconceptions, risks or trade-offs.
+**Smart things to say** — 2 lines the user could say to show depth, ready to say aloud.
+**Sources:** one line of links.
+Never repeat what is already in the copilot's response or earlier deep dives below; go further.`;

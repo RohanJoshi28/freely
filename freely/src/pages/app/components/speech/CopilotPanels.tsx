@@ -18,6 +18,7 @@ export const CopilotHotkeys = ({
       ["G", "Sonnet"],
       ["H", "Haiku"],
       ["S", "Search"],
+      ["M", "Deep dive"],
     ].map(([k, label]) => (
       <span key={k} className="text-[9px] text-muted-foreground/70">
         <span className="bg-muted/50 px-1 rounded mr-1">{key(k)}</span>
@@ -102,9 +103,7 @@ export const WrapUpPanel = ({ wrapUp }: { wrapUp: WrapUpState }) => (
     {wrapUp.loading && !wrapUp.text ? (
       <div className="flex items-center gap-2 py-2">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
-        <span className="text-xs text-muted-foreground">
-          Writing notes…
-        </span>
+        <span className="text-xs text-muted-foreground">Writing notes…</span>
       </div>
     ) : (
       <div className="prose prose-sm max-w-none dark:prose-invert">

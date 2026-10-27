@@ -87,7 +87,8 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "generate_haiku",
     name: "Generate with Haiku",
-    description: "While listening, respond now with Haiku (faster model, can use tools and web search)",
+    description:
+      "While listening, respond now with Haiku (faster model, can use tools and web search)",
     defaultKey: {
       macos: "ctrl+h",
       windows: "ctrl+alt+h",
@@ -97,7 +98,8 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "generate_search",
     name: "Generate with Search",
-    description: "While listening, search the web first, then respond with Sonnet",
+    description:
+      "While listening, search the web first, then respond with Sonnet",
     defaultKey: {
       macos: "ctrl+s",
       windows: "ctrl+alt+s",
@@ -115,6 +117,17 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
     },
   },
   {
+    id: "deep_dive",
+    name: "Deep Dive",
+    description:
+      "While listening: search and pull up much more on the current topic, in a second panel",
+    defaultKey: {
+      macos: "ctrl+m",
+      windows: "ctrl+alt+m",
+      linux: "ctrl+alt+m",
+    },
+  },
+  {
     id: "copilot_catch_up",
     name: "Catch Me Up",
     description: "While listening: what you missed in the last few minutes",
@@ -127,7 +140,8 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "copilot_define",
     name: "Define Term",
-    description: "While listening: explain the latest unfamiliar term, acronym or name",
+    description:
+      "While listening: explain the latest unfamiliar term, acronym or name",
     defaultKey: {
       macos: "ctrl+2",
       windows: "ctrl+alt+2",
@@ -137,7 +151,8 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "copilot_clarify",
     name: "What They're Asking",
-    description: "While listening: what the other person is really asking and what a strong answer covers",
+    description:
+      "While listening: what the other person is really asking and what a strong answer covers",
     defaultKey: {
       macos: "ctrl+3",
       windows: "ctrl+alt+3",
@@ -147,7 +162,8 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "copilot_say_next",
     name: "Say Something Smart",
-    description: "While listening: one specific point or question to say right now",
+    description:
+      "While listening: one specific point or question to say right now",
     defaultKey: {
       macos: "ctrl+4",
       windows: "ctrl+alt+4",

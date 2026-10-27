@@ -17,6 +17,7 @@ import {
   AssistantMode,
   AssistantModeOption,
   COPILOT_ACTIONS,
+  DEEP_DIVE_INSTRUCTION,
   ON_DEMAND_INSTRUCTION,
   GENERATION_PROFILES,
   GenerationProfileId,
@@ -122,6 +123,15 @@ export interface WrapUpState {
   error?: string;
 }
 
+/** One Ctrl+M deep dive, shown in the second panel */
+export interface DeepDiveEntry {
+  id: string;
+  text: string;
+  loading: boolean;
+  error?: string;
+  label: string;
+}
+
 export type useSystemAudioType = ReturnType<typeof useSystemAudio>;
 
 /** How long a "wait" verdict holds a fragment before answering anyway */
@@ -171,6 +181,8 @@ export function useSystemAudio() {
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [lastTranscription, setLastTranscription] = useState<string>("");
   const [lastAIResponse, setLastAIResponse] = useState<string>("");
+  const lastAIResponseRef = useRef(lastAIResponse);
+  lastAIResponseRef.current = lastAIResponse;
   const [error, setError] = useState<string>("");
   const [setupRequired, setSetupRequired] = useState<boolean>(false);
   const [quickActions, setQuickActions] = useState<string[]>([]);
@@ -185,6 +197,10 @@ export function useSystemAudio() {
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [liveTranscriptionReady, setLiveTranscriptionReady] = useState(false);
   const [helper, setHelper] = useState<CopilotHelperState | null>(null);
+  const [deepDives, setDeepDives] = useState<DeepDiveEntry[]>([]);
+  const deepDivesRef = useRef(deepDives);
+  deepDivesRef.current = deepDives;
+  const deepDiveAbortRef = useRef<AbortController | null>(null);
   const [wrapUp, setWrapUp] = useState<WrapUpState | null>(null);
   const [thinkingLevel, setThinkingLevel] =
     useState<ThinkingLevel>(getThinkingLevel);
@@ -918,6 +934,100 @@ export function useSystemAudio() {
       });
     }
   };
+  /**
+   * Ctrl+M: search and go deeper on the current topic. Streams into its own
+   * panel, one entry per press, and never touches the main answer.
+   */
+  const runDeepDive = async () => {
+    if (deepDivesRef.current.some((entry) => entry.loading)) return;
+    const hasContext =
+      conversationRef.current.messages.length > 0 ||
+      transcriptRef.current.length > 0;
+    if (!capturingRef.current && !hasContext) return;
+
+    const provider = allAiProviders.find(
+      (p) => p.id === selectedAIProvider.provider,
+    );
+    if (!provider) return;
+
+    // What the user is saying right now is part of "the topic"
+    if (capturingRef.current && micFlushRef.current) {
+      await micFlushRef.current();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    const profile = GENERATION_PROFILES.search;
+    const effort = getThinkingLevel();
+    const id = `deep-${Date.now()}`;
+    const update = (patch: Partial<DeepDiveEntry>) =>
+      setDeepDives((prev) =>
+        prev.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
+      );
+    const earlier = deepDivesRef.current
+      .filter((entry) => entry.text)
+      .slice(-3)
+      .map((entry) => entry.text);
+    const latestAnswer = lastAIResponseRef.current;
+    const message = [
+      DEEP_DIVE_INSTRUCTION,
+      latestAnswer &&
+        `The copilot's latest response (go beyond it, don't repeat it):\n${latestAnswer}`,
+      earlier.length &&
+        `Earlier deep dives (don't repeat them; go further or cover what's new):\n${earlier.join("\n\n---\n\n")}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    deepDiveAbortRef.current?.abort();
+    const controller = new AbortController();
+    deepDiveAbortRef.current = controller;
+    setDeepDives((prev) => [
+      ...prev,
+      {
+        id,
+        text: "",
+        loading: true,
+        label: `${profile.label} · ${effort} thinking`,
+      },
+    ]);
+
+    let text = "";
+    try {
+      for await (const chunk of fetchAIResponse({
+        provider,
+        selectedProvider: selectedAIProvider,
+        systemPrompt: getEffectiveSystemPrompt(),
+        history: historyWithLiveContext(),
+        userMessage: message,
+        agentOptions: {
+          model: profile.model,
+          effort,
+          tools: profile.tools,
+          allowedTools: profile.allowedTools,
+        },
+        signal: controller.signal,
+      })) {
+        if (controller.signal.aborted) return;
+        text += chunk;
+        update({ text });
+      }
+      if (!controller.signal.aborted) update({ loading: false });
+    } catch (err: any) {
+      if (controller.signal.aborted) return;
+      update({
+        loading: false,
+        error: err?.message || "Deep dive failed",
+      });
+    }
+  };
+  const runDeepDiveRef = useRef(runDeepDive);
+  runDeepDiveRef.current = runDeepDive;
+
+  const clearDeepDives = useCallback(() => {
+    deepDiveAbortRef.current?.abort();
+    setDeepDives([]);
+  }, []);
+
   const runCopilotActionRef = useRef(runCopilotAction);
   runCopilotActionRef.current = runCopilotAction;
 
@@ -1061,6 +1171,7 @@ export function useSystemAudio() {
         updatedAt: 0,
       });
       setTranscript([]);
+      clearDeepDives();
       resetTurnState();
       helperAbortRef.current?.abort();
       setHelper(null);
@@ -1273,6 +1384,13 @@ export function useSystemAudio() {
     });
   }, []);
 
+  // Ctrl+M: deep dive in the second panel
+  useEffect(() => {
+    globalShortcuts.registerCustomShortcutCallback("deep_dive", () => {
+      runDeepDiveRef.current();
+    });
+  }, []);
+
   // Helper hotkeys (Ctrl+1–4)
   useEffect(() => {
     COPILOT_ACTIONS.forEach((action) => {
@@ -1366,6 +1484,7 @@ export function useSystemAudio() {
       }
       helperAbortRef.current?.abort();
       wrapUpAbortRef.current?.abort();
+      deepDiveAbortRef.current?.abort();
       invoke("stop_system_audio_capture").catch(() => {});
     };
   }, []);
@@ -1462,6 +1581,8 @@ export function useSystemAudio() {
       updatedAt: 0,
     });
     setTranscript([]);
+    deepDiveAbortRef.current?.abort();
+    setDeepDives([]);
     resetTurnState();
     setHelper(null);
     setWrapUp(null);
@@ -1630,5 +1751,7 @@ export function useSystemAudio() {
     runCopilotAction,
     wrapUp,
     dismissWrapUp,
+    deepDives,
+    clearDeepDives,
   };
 }

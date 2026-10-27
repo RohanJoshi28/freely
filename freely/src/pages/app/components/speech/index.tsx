@@ -25,6 +25,7 @@ import { QuickActions } from "./QuickActions";
 import { Warning } from "./Warning";
 import { MicListener } from "./MicListener";
 import { LiveTranscript } from "./LiveTranscript";
+import { DeepDivePanel } from "./DeepDivePanel";
 import { CopilotHotkeys, HelperCard, WrapUpPanel } from "./CopilotPanels";
 import { getMicEnabled } from "@/lib/storage";
 import { useSystemAudioType } from "@/hooks";
@@ -77,6 +78,8 @@ export const SystemAudio = (props: useSystemAudioType) => {
     dismissWrapUp,
     thinkingLevel,
     responseLabel,
+    deepDives,
+    clearDeepDives,
   } = props;
 
   const { hasActiveLicense, supportsImages } = useApp();
@@ -301,120 +304,133 @@ export const SystemAudio = (props: useSystemAudioType) => {
                 </div>
               </div>
 
-              <ScrollArea className="flex-1 min-h-0" ref={scrollAreaRef}>
-                <div className="p-2 space-y-2">
-                  {/* Screenshot Preview */}
-                  {screenshotImage && (
-                    <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/20">
-                      <img
-                        src={`data:image/png;base64,${screenshotImage}`}
-                        alt="Screenshot"
-                        className="h-12 w-20 object-cover rounded"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[10px] font-medium">
-                          Screenshot attached
-                        </p>
-                        <p className="text-[9px] text-muted-foreground">
-                          Will be sent with next transcription
-                        </p>
-                      </div>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-5 w-5"
-                        onClick={handleRemoveScreenshot}
-                      >
-                        <XIcon className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  )}
-
-                  {/* Error Display */}
-                  {error && !setupRequired && (
-                    <div className="flex items-start gap-2 p-2.5 rounded-lg bg-red-50 border border-red-200">
-                      <AlertCircleIcon className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-[10px] font-medium text-red-800">
-                          Error
-                        </p>
-                        <p className="text-[10px] text-red-700">{error}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Setup Required - Permission Flow */}
-                  {setupRequired ? (
-                    <PermissionFlow
-                      onPermissionGranted={() => {
-                        startCapture();
-                      }}
-                      onPermissionDenied={() => {
-                        // Keep showing setup instructions
-                      }}
-                    />
-                  ) : (
-                    <>
-                      {/* Notes written when listening stopped */}
-                      {wrapUp && <WrapUpPanel wrapUp={wrapUp} />}
-
-                      {/* Live transcript and helper hotkeys */}
-                      {capturing && (
-                        <>
-                          <LiveTranscript
-                            transcript={transcript}
-                            liveReady={liveTranscriptionReady}
-                          />
-                          <CopilotHotkeys thinkingLevel={thinkingLevel} />
-                        </>
-                      )}
-
-                      {helper && (
-                        <HelperCard helper={helper} onDismiss={dismissHelper} />
-                      )}
-
-                      {/* Recording Panel */}
-                      {capturing && (
-                        <RecordingPanel
-                          isVadMode={isVadMode}
-                          isRecording={isRecordingInContinuousMode}
-                          isProcessing={isProcessing}
-                          isAIProcessing={isAIProcessing}
-                          recordingProgress={recordingProgress}
-                          maxDuration={vadConfig.max_recording_duration_secs}
-                          onStartRecording={startContinuousRecording}
-                          onStopAndSend={manualStopAndSend}
-                          onIgnore={ignoreContinuousRecording}
+              <div className="flex flex-1 min-h-0">
+                <ScrollArea
+                  className="flex-1 min-w-0 min-h-0"
+                  ref={scrollAreaRef}
+                >
+                  <div className="p-2 space-y-2">
+                    {/* Screenshot Preview */}
+                    {screenshotImage && (
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/20">
+                        <img
+                          src={`data:image/png;base64,${screenshotImage}`}
+                          alt="Screenshot"
+                          className="h-12 w-20 object-cover rounded"
                         />
-                      )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] font-medium">
+                            Screenshot attached
+                          </p>
+                          <p className="text-[9px] text-muted-foreground">
+                            Will be sent with next transcription
+                          </p>
+                        </div>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-5 w-5"
+                          onClick={handleRemoveScreenshot}
+                        >
+                          <XIcon className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    )}
 
-                      {/* AI Response */}
-                      <ResultsSection
-                        lastTranscription={lastTranscription}
-                        lastAIResponse={lastAIResponse}
-                        responseLabel={responseLabel}
-                        isAIProcessing={isAIProcessing}
-                        conversation={conversation}
-                        conversationMode={conversationMode}
-                        setConversationMode={setConversationMode}
+                    {/* Error Display */}
+                    {error && !setupRequired && (
+                      <div className="flex items-start gap-2 p-2.5 rounded-lg bg-red-50 border border-red-200">
+                        <AlertCircleIcon className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-[10px] font-medium text-red-800">
+                            Error
+                          </p>
+                          <p className="text-[10px] text-red-700">{error}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Setup Required - Permission Flow */}
+                    {setupRequired ? (
+                      <PermissionFlow
+                        onPermissionGranted={() => {
+                          startCapture();
+                        }}
+                        onPermissionDenied={() => {
+                          // Keep showing setup instructions
+                        }}
                       />
+                    ) : (
+                      <>
+                        {/* Notes written when listening stopped */}
+                        {wrapUp && <WrapUpPanel wrapUp={wrapUp} />}
 
-                      {/* Settings Panel */}
-                      <SettingsPanel
-                        vadConfig={vadConfig}
-                        onUpdateVadConfig={updateVadConfiguration}
-                        useSystemPrompt={useSystemPrompt}
-                        setUseSystemPrompt={setUseSystemPrompt}
-                        contextContent={contextContent}
-                        setContextContent={setContextContent}
-                      />
+                        {/* Live transcript and helper hotkeys */}
+                        {capturing && (
+                          <>
+                            <LiveTranscript
+                              transcript={transcript}
+                              liveReady={liveTranscriptionReady}
+                            />
+                            <CopilotHotkeys thinkingLevel={thinkingLevel} />
+                          </>
+                        )}
 
-                      {/* Help/Keyboard Shortcuts */}
-                      <Warning isVadMode={isVadMode} />
-                    </>
-                  )}
-                </div>
-              </ScrollArea>
+                        {helper && (
+                          <HelperCard
+                            helper={helper}
+                            onDismiss={dismissHelper}
+                          />
+                        )}
+
+                        {/* Recording Panel */}
+                        {capturing && (
+                          <RecordingPanel
+                            isVadMode={isVadMode}
+                            isRecording={isRecordingInContinuousMode}
+                            isProcessing={isProcessing}
+                            isAIProcessing={isAIProcessing}
+                            recordingProgress={recordingProgress}
+                            maxDuration={vadConfig.max_recording_duration_secs}
+                            onStartRecording={startContinuousRecording}
+                            onStopAndSend={manualStopAndSend}
+                            onIgnore={ignoreContinuousRecording}
+                          />
+                        )}
+
+                        {/* AI Response */}
+                        <ResultsSection
+                          lastTranscription={lastTranscription}
+                          lastAIResponse={lastAIResponse}
+                          responseLabel={responseLabel}
+                          isAIProcessing={isAIProcessing}
+                          conversation={conversation}
+                          conversationMode={conversationMode}
+                          setConversationMode={setConversationMode}
+                        />
+
+                        {/* Settings Panel */}
+                        <SettingsPanel
+                          vadConfig={vadConfig}
+                          onUpdateVadConfig={updateVadConfiguration}
+                          useSystemPrompt={useSystemPrompt}
+                          setUseSystemPrompt={setUseSystemPrompt}
+                          contextContent={contextContent}
+                          setContextContent={setContextContent}
+                        />
+
+                        {/* Help/Keyboard Shortcuts */}
+                        <Warning isVadMode={isVadMode} />
+                      </>
+                    )}
+                  </div>
+                </ScrollArea>
+
+                {/* Second panel: Ctrl+M deep dives */}
+                {deepDives.length > 0 && (
+                  <DeepDivePanel entries={deepDives} onClear={clearDeepDives} />
+                )}
+              </div>
 
               {/* Quick Actions */}
               {!setupRequired && hasResponse && (
