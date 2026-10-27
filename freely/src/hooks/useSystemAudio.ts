@@ -97,6 +97,13 @@ export interface ChatConversation {
   updatedAt: number;
 }
 
+/**
+ * Message ids for live audio: generateMessageId is only timestamp + role, so
+ * two lines in the same millisecond would collide and the save would fail
+ */
+const liveMessageId = (role: "user" | "assistant", timestamp: number) =>
+  `${generateMessageId(role, timestamp)}_${Math.random().toString(36).slice(2, 8)}`;
+
 /** One line of the live transcript shown while listening */
 export interface TranscriptLine {
   id: string;
@@ -267,19 +274,19 @@ export function useSystemAudio() {
   sttRef.current = { selectedSttProvider, allSttProviders };
 
   /**
-   * Claude Code: keep a Sonnet process started and waiting while listening
-   * (automatic answers, Ctrl+G, helpers). Other profiles warm up after their
-   * first use. Saves ~3 s of CLI startup per answer.
+   * Claude Code: keep Sonnet (automatic answers, Ctrl+G, helpers) and Ctrl+S
+   * processes started and waiting while listening. Other profiles warm up
+   * after their first use. Saves ~3 s of CLI startup per answer.
    */
   const prewarmRef = useRef(() => {});
   prewarmRef.current = () => {
     if (selectedAIProvider.provider !== "claude-code") return;
+    const effort = getThinkingLevel();
+    const variables = selectedAIProvider.variables;
     prewarmClaude([
-      claudeLaunchFor(
-        GENERATION_PROFILES.sonnet,
-        getThinkingLevel(),
-        selectedAIProvider.variables,
-      ),
+      claudeLaunchFor(GENERATION_PROFILES.sonnet, effort, variables),
+      // Ctrl+S is the slowest key, so it starts warm too
+      claudeLaunchFor(GENERATION_PROFILES.search, effort, variables),
     ]);
   };
 
@@ -365,7 +372,7 @@ export function useSystemAudio() {
       ...prev,
       messages: [
         {
-          id: generateMessageId("user", timestamp),
+          id: liveMessageId("user", timestamp),
           role: "user" as const,
           content: text,
           timestamp,
@@ -489,7 +496,7 @@ export function useSystemAudio() {
           ...prev,
           messages: [
             {
-              id: generateMessageId("user", timestamp),
+              id: liveMessageId("user", timestamp),
               role: "user" as const,
               content: transcription,
               timestamp,
@@ -558,7 +565,7 @@ export function useSystemAudio() {
             ...prev,
             messages: [
               {
-                id: generateMessageId("assistant", timestamp),
+                id: liveMessageId("assistant", timestamp),
                 role: "assistant" as const,
                 content: fullResponse,
                 timestamp,
@@ -1093,7 +1100,7 @@ export function useSystemAudio() {
           ...prev,
           messages: [
             {
-              id: generateMessageId("assistant", timestamp),
+              id: liveMessageId("assistant", timestamp),
               role: "assistant" as const,
               content: `**Wrap-up**\n\n${text}`,
               timestamp,
@@ -1265,7 +1272,7 @@ export function useSystemAudio() {
         if (pendingFragmentRef.current) {
           const timestamp = Date.now();
           const pending: ChatMessage = {
-            id: generateMessageId("user", timestamp),
+            id: liveMessageId("user", timestamp),
             role: "user",
             content: pendingFragmentRef.current,
             timestamp,
@@ -1538,7 +1545,18 @@ export function useSystemAudio() {
 
       try {
         isSavingRef.current = true;
-        await saveConversation(conversation);
+        // A conversation without a title is rejected by saveConversation;
+        // only answered turns set one, so name it after its first line
+        const firstLine = [...conversation.messages].sort(
+          (a, b) => a.timestamp - b.timestamp,
+        )[0]?.content;
+        await saveConversation({
+          ...conversation,
+          title:
+            conversation.title ||
+            (firstLine ? generateConversationTitle(firstLine) : "") ||
+            "Live conversation",
+        });
       } catch (error) {
         console.error("Failed to save system audio conversation:", error);
       } finally {
@@ -1575,7 +1593,7 @@ export function useSystemAudio() {
         ...prev,
         messages: [
           {
-            id: generateMessageId("user", timestamp),
+            id: liveMessageId("user", timestamp),
             role: "user" as const,
             content: text,
             timestamp,

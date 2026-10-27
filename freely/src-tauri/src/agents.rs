@@ -459,7 +459,10 @@ async fn claude_command(
     // Clear env vars that cause "nested session" detection when Freely
     // itself was launched from inside a Claude Code terminal.
     cmd.env_remove("CLAUDECODE")
-        .env_remove("CLAUDE_CODE_ENTRYPOINT");
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        // Load tools upfront: deferred loading costs a whole extra model turn
+        // (ToolSearch) before the first web search, ~2.5 s in testing
+        .env("ENABLE_TOOL_SEARCH", "false");
 
     // Set working directory: use the user's project directory when provided,
     // otherwise fall back to the .claude config dir so the CLI picks up CLAUDE.md.

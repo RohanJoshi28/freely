@@ -698,6 +698,26 @@ should already be running the moment freely is open."
 - `claudeLaunchFor` must resolve the model like `fetchAIResponse` does, or
   the warm process won't match the call.
 
+### 11.15 Why a Ctrl+S answer took ~19 s; conversations not saving
+
+- Claude Code's own session logs are the best latency source:
+  `~/.claude/projects/-Users-rohanjoshi-Library-Application-Support-com-freely-app--claude/*.jsonl`
+  (timestamped prompt, tool calls, results, text). One Ctrl+S answer: 2.1 s
+  ToolSearch turn (full toolset defers WebSearch) + 1.8 s choosing searches +
+  5.5 s searches + 6.4 s writing ≈ 16 s, plus ~3 s cold start (search profile
+  wasn't pre-started).
+- Fixes: `claude_command` sets `ENABLE_TOOL_SEARCH=false` (tools load upfront;
+  3-run median 12.9 s vs 15.4 s, full toolset kept), and the search profile is
+  pre-started with Sonnet while listening (~400 MB total).
+- **Conversations stopped saving after 11:56**: `saveConversation` rejects an
+  empty title, and only answered "them" turns set one, so sessions of mic
+  speech + Ctrl+S never saved. The save effect now falls back to the first
+  line (or "Live conversation"). Also `generateMessageId` is just
+  `msg_<ms>_<role>` (messages.id is a global primary key), so same-millisecond
+  messages collided; live audio now uses `liveMessageId` (adds a random
+  suffix). `generateMessageId` itself is unchanged: the chat hooks rebuild the
+  same id per streamed chunk.
+
 ### 11.7 Not verified by ear
 
 Same caveat as §8: nobody could play audio here. The judge was verified
