@@ -87,12 +87,22 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "generate_haiku",
     name: "Generate with Haiku",
-    description:
-      "While listening, respond now with Haiku (faster model, can use tools and web search)",
+    description: "While listening, respond now with Haiku (no tools, fastest)",
     defaultKey: {
       macos: "ctrl+h",
       windows: "ctrl+alt+h",
       linux: "ctrl+alt+h",
+    },
+  },
+  {
+    id: "generate_haiku_search",
+    name: "Generate with Haiku + Search",
+    description:
+      "While listening, search the web first, then respond with Haiku",
+    defaultKey: {
+      macos: "ctrl+d",
+      windows: "ctrl+alt+d",
+      linux: "ctrl+alt+d",
     },
   },
   {

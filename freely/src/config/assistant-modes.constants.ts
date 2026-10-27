@@ -103,7 +103,8 @@ export const wrapUpMessage = (mode: Exclude<AssistantMode, "none">): string =>
     : "[Copilot action] The interview just ended. Write the notes I'd want afterwards, including the questions they asked.";
 
 /** How a response is generated: which Claude model and which tools it may use */
-export type GenerationProfileId = "sonnet" | "haiku" | "search" | "more";
+export type GenerationProfileId =
+  "sonnet" | "haiku" | "search" | "haikuSearch" | "more";
 
 export interface GenerationProfile {
   id: GenerationProfileId;
@@ -122,27 +123,32 @@ export interface GenerationProfile {
 // available but unapproved, so a non-interactive run can't use them.
 const LOOKUP_TOOLS = ["WebSearch", "WebFetch", "Read", "Grep", "Glob"];
 
+const SEARCH_FIRST = `(Always search first: run 1–3 WebSearches for the latest information, using extended mode for anything time-sensitive like news or markets, and WebFetch primary sources where useful.)`;
+
 export const GENERATION_PROFILES: Record<
   GenerationProfileId,
   GenerationProfile
 > = {
   // Ctrl+G and every automatic answer: no tools, fastest
   sonnet: { id: "sonnet", label: "Sonnet", tools: "" },
-  // Ctrl+H
-  haiku: {
-    id: "haiku",
-    label: "Haiku",
-    model: "haiku",
-    tools: "default",
-    allowedTools: LOOKUP_TOOLS,
-  },
+  // Ctrl+H: Haiku, no tools
+  haiku: { id: "haiku", label: "Haiku", model: "haiku", tools: "" },
   // Ctrl+S
   search: {
     id: "search",
     label: "Sonnet + web search",
     tools: "default",
     allowedTools: LOOKUP_TOOLS,
-    instruction: `(Always search first: run 1–3 WebSearches for the latest information, using extended mode for anything time-sensitive like news or markets, and WebFetch primary sources where useful.)`,
+    instruction: SEARCH_FIRST,
+  },
+  // Ctrl+D: Ctrl+S with Haiku
+  haikuSearch: {
+    id: "haikuSearch",
+    label: "Haiku + web search",
+    model: "haiku",
+    tools: "default",
+    allowedTools: LOOKUP_TOOLS,
+    instruction: SEARCH_FIRST,
   },
   // Ctrl+M: web tools only, which skips the full toolset's tool-loading step
   more: {

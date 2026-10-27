@@ -18,6 +18,7 @@ export const CopilotHotkeys = ({
       ["G", "Sonnet"],
       ["H", "Haiku"],
       ["S", "Search"],
+      ["D", "Haiku+search"],
       ["M", "More info"],
     ].map(([k, label]) => (
       <span key={k} className="text-[9px] text-muted-foreground/70">

@@ -1384,6 +1384,7 @@ export function useSystemAudio() {
       generate_now: "sonnet",
       generate_haiku: "haiku",
       generate_search: "search",
+      generate_haiku_search: "haikuSearch",
     };
     Object.entries(generateShortcuts).forEach(([actionId, profileId]) => {
       globalShortcuts.registerCustomShortcutCallback(actionId, async () => {

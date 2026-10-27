@@ -749,6 +749,15 @@ shell's `vad_config.enabled` was `false`, i.e. the popover's
 after pressing Enter in the panel. The mode shortcuts now call
 `startCapture({ autoDetect: true })`, which switches back to Auto-detect.
 
+### 11.18 Ctrl+D Haiku + search; Ctrl+H without tools
+
+Rohan: "control + d should trigger search but with haiku instead and control
++ h should be without search". Profiles now: `sonnet` (Ctrl+G, auto: no
+tools), `haiku` (Ctrl+H: Haiku, no tools), `search` (Ctrl+S: Sonnet + full
+toolset + `SEARCH_FIRST`), `haikuSearch` (Ctrl+D, `generate_haiku_search`:
+Haiku + full toolset + `SEARCH_FIRST`), `more` (Ctrl+M). New global shortcuts
+only register when the frontend starts, so the dev shell needs a restart.
+
 ### 11.7 Not verified by ear
 
 Same caveat as §8: nobody could play audio here. The judge was verified
