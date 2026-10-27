@@ -59,7 +59,7 @@ export const ResultsSection = ({
           {/* System Input - Just text with bold label */}
           {lastTranscription && (
             <p className="text-[11px] text-muted-foreground">
-              <span className="font-semibold">System:</span> {lastTranscription}
+              <span className="font-semibold">Them:</span> {lastTranscription}
             </p>
           )}
 
@@ -122,7 +122,7 @@ export const ResultsSection = ({
               <div className="flex items-center gap-1.5 mb-1">
                 <HeadphonesIcon className="h-3 w-3 text-primary" />
                 <span className="text-[9px] font-medium text-primary uppercase tracking-wide">
-                  System
+                  Them
                 </span>
               </div>
               <p className="text-sm">{lastTranscription}</p>
@@ -146,11 +146,15 @@ export const ResultsSection = ({
                         "p-2 rounded-md text-[11px]",
                         message.role === "user"
                           ? "bg-primary/5 border-l-2 border-primary/30"
-                          : "bg-background/50"
+                          : "bg-background/50",
                       )}
                     >
                       <span className="text-[8px] font-medium text-muted-foreground uppercase">
-                        {message.role === "user" ? "System" : "AI"}
+                        {message.role === "user"
+                          ? message.speakerLabel === "user"
+                            ? "You"
+                            : "Them"
+                          : "AI"}
                       </span>
                       <div className="text-muted-foreground leading-relaxed mt-0.5">
                         <Markdown>{message.content}</Markdown>

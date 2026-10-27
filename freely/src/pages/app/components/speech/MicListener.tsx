@@ -1,7 +1,11 @@
 import { useRef } from "react";
 import { useMicVAD } from "@ricky0123/vad-react";
 import { useApp } from "@/contexts";
-import { fetchSTT } from "@/lib/functions";
+import {
+  fetchSTT,
+  isLocalWhisperReady,
+  transcribeLocally,
+} from "@/lib/functions";
 import { floatArrayToWav } from "@/lib/utils";
 
 interface MicListenerProps {
@@ -34,19 +38,27 @@ export const MicListener = ({ onUserSpeech }: MicListenerProps) => {
     },
     onSpeechEnd: async (audio) => {
       const startedAt = segmentStartRef.current;
-      const providerConfig = allSttProviders.find(
-        (p) => p.id === selectedSttProvider.provider
-      );
-      if (!providerConfig) return;
+      const wav = floatArrayToWav(audio, 16000, "wav");
 
       try {
-        const result = await fetchSTT({
-          provider: providerConfig,
-          selectedProvider: selectedSttProvider,
-          audio: floatArrayToWav(audio, 16000, "wav"),
-          source: "mic",
-        });
-        const text = result.text.trim();
+        // Your own words are context only, so the local model is accurate
+        // enough and keeps the cloud STT quota for the other person
+        let text = "";
+        if (isLocalWhisperReady()) {
+          text = await transcribeLocally(wav);
+        } else {
+          const providerConfig = allSttProviders.find(
+            (p) => p.id === selectedSttProvider.provider,
+          );
+          if (!providerConfig) return;
+          const result = await fetchSTT({
+            provider: providerConfig,
+            selectedProvider: selectedSttProvider,
+            audio: wav,
+            source: "mic",
+          });
+          text = result.text.trim();
+        }
         if (text) onUserSpeechRef.current(text, startedAt);
       } catch (err) {
         console.error("Mic transcription failed:", err);

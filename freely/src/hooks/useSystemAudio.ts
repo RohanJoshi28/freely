@@ -3,12 +3,27 @@ import { useWindowResize, useGlobalShortcuts } from ".";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useApp } from "@/contexts";
-import { fetchSTT, fetchAIResponse } from "@/lib/functions";
 import {
+  fetchSTT,
+  fetchAIResponse,
+  judgeTurn,
+  prepareLiveTranscription,
+  setLiveTranscription,
+  isLocalWhisperReady,
+  transcribeLocally,
+  cleanLocalTranscript,
+} from "@/lib/functions";
+import {
+  AssistantMode,
   AssistantModeOption,
+  COPILOT_ACTIONS,
+  CopilotActionId,
   DEFAULT_QUICK_ACTIONS,
   DEFAULT_SYSTEM_PROMPT,
   STORAGE_KEYS,
+  copilotActionMessage,
+  getCopilotAction,
+  wrapUpMessage,
 } from "@/config";
 import {
   safeLocalStorage,
@@ -18,7 +33,14 @@ import {
   generateConversationId,
   generateMessageId,
 } from "@/lib";
-import { Message, SpeakerLabel } from "@/types/completion";
+import {
+  getLiveTranscriptionEnabled,
+  getLiveTranscriptionModel,
+  getTurnJudgeEnabled,
+  getTurnJudgeKeys,
+  getWrapUpEnabled,
+} from "@/lib/storage";
+import { AudioSource, Message, SpeakerLabel } from "@/types/completion";
 
 // VAD Configuration interface matching Rust
 export interface VadConfig {
@@ -52,6 +74,8 @@ interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
+  audioSource?: AudioSource;
+  speakerLabel?: SpeakerLabel;
 }
 
 // Conversation interface (reusing from useCompletion)
@@ -63,26 +87,77 @@ export interface ChatConversation {
   updatedAt: number;
 }
 
+/** One line of the live transcript shown while listening */
+export interface TranscriptLine {
+  id: string;
+  speaker: "them" | "you";
+  text: string;
+  /** live: local Whisper partial; refining: waiting for Groq; final: done */
+  status: "live" | "refining" | "final";
+  /** What the turn judge decided for this line, when it ran */
+  verdict?: "respond" | "wait" | "skip";
+  timestamp: number;
+}
+
+/** Output of a hotkey helper (catch me up, define, …) */
+export interface CopilotHelperState {
+  actionId: CopilotActionId;
+  label: string;
+  text: string;
+  loading: boolean;
+  error?: string;
+}
+
+/** Notes generated when listening stops */
+export interface WrapUpState {
+  mode: Exclude<AssistantMode, "none">;
+  text: string;
+  loading: boolean;
+  error?: string;
+}
+
 export type useSystemAudioType = ReturnType<typeof useSystemAudio>;
 
 const GENERATE_NOW_MESSAGE =
   "(No new audio. The user asked for a response right now: respond to the most recent question or topic in the conversation so far.)";
 
-/** Conversation messages as AI history, marking the user's own mic lines */
-const toHistory = (
-  messages: Array<{
-    role: Message["role"];
-    content: string;
-    speakerLabel?: SpeakerLabel;
-  }>
-): Message[] =>
-  messages.map((msg) => ({
-    role: msg.role,
-    content:
-      msg.role === "user" && msg.speakerLabel === "user"
-        ? `[You said]: ${msg.content}`
-        : msg.content,
-  }));
+/** How long a "wait" verdict holds a fragment before answering anyway */
+const WAIT_FALLBACK_MS = 4000;
+/** Transcript lines kept on screen and given to the judge as context */
+const MAX_TRANSCRIPT_LINES = 200;
+const JUDGE_CONTEXT_LINES = 6;
+
+/**
+ * Conversation messages as AI history, oldest first (messages are stored
+ * newest first), marking the user's own mic lines.
+ */
+const toHistory = (messages: ChatMessage[]): Message[] =>
+  [...messages]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((msg) => ({
+      role: msg.role,
+      content:
+        msg.role === "user" && msg.speakerLabel === "user"
+          ? `[You said]: ${msg.content}`
+          : msg.content,
+    }));
+
+const base64ToWavBlob = (base64Audio: string): Blob => {
+  const binaryString = atob(base64Audio);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: "audio/wav" });
+};
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, message: string) =>
+  Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(message)), ms),
+    ),
+  ]);
 
 export function useSystemAudio() {
   const { resizeWindow } = useWindowResize();
@@ -104,6 +179,10 @@ export function useSystemAudio() {
   const [isContinuousMode, setIsContinuousMode] = useState<boolean>(false);
   const [isRecordingInContinuousMode, setIsRecordingInContinuousMode] =
     useState<boolean>(false);
+  const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
+  const [liveTranscriptionReady, setLiveTranscriptionReady] = useState(false);
+  const [helper, setHelper] = useState<CopilotHelperState | null>(null);
+  const [wrapUp, setWrapUp] = useState<WrapUpState | null>(null);
 
   const [conversation, setConversation] = useState<ChatConversation>({
     id: "",
@@ -128,6 +207,8 @@ export function useSystemAudio() {
     setAssistantMode,
   } = useApp();
   const abortControllerRef = useRef<AbortController | null>(null);
+  const helperAbortRef = useRef<AbortController | null>(null);
+  const wrapUpAbortRef = useRef<AbortController | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Whether the other person is talking right now (system audio VAD)
   const systemSpeechActiveRef = useRef(false);
@@ -135,10 +216,37 @@ export function useSystemAudio() {
   const isSavingRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
+  // Live transcript / turn-taking state read from event listeners
+  const liveSegmentRef = useRef<number | null>(null);
+  const pendingFragmentRef = useRef("");
+  const waitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAnsweredRef = useRef("");
+  const forceRespondRef = useRef(false);
+  const turnQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  // Latest render values for listeners registered once
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
+  const transcriptRef = useRef(transcript);
+  transcriptRef.current = transcript;
+  const capturingRef = useRef(capturing);
+  capturingRef.current = capturing;
+  const assistantModeRef = useRef(assistantMode);
+  assistantModeRef.current = assistantMode;
+  const sttRef = useRef({ selectedSttProvider, allSttProviders });
+  sttRef.current = { selectedSttProvider, allSttProviders };
+
+  const getEffectiveSystemPrompt = () =>
+    useSystemPrompt
+      ? systemPrompt || DEFAULT_SYSTEM_PROMPT
+      : contextContent || DEFAULT_SYSTEM_PROMPT;
+  const effectivePromptRef = useRef(getEffectiveSystemPrompt);
+  effectivePromptRef.current = getEffectiveSystemPrompt;
+
   // Load context settings and VAD config from localStorage on mount
   useEffect(() => {
     const savedContext = safeLocalStorage.getItem(
-      STORAGE_KEYS.SYSTEM_AUDIO_CONTEXT
+      STORAGE_KEYS.SYSTEM_AUDIO_CONTEXT,
     );
     if (savedContext) {
       try {
@@ -165,7 +273,7 @@ export function useSystemAudio() {
   // Load quick actions from localStorage on mount
   useEffect(() => {
     const savedActions = safeLocalStorage.getItem(
-      STORAGE_KEYS.SYSTEM_AUDIO_QUICK_ACTIONS
+      STORAGE_KEYS.SYSTEM_AUDIO_QUICK_ACTIONS,
     );
     if (savedActions) {
       try {
@@ -179,6 +287,57 @@ export function useSystemAudio() {
       setQuickActions(DEFAULT_QUICK_ACTIONS);
     }
   }, []);
+
+  // --- Live transcript helpers ------------------------------------------
+
+  const upsertLine = useCallback(
+    (id: string, patch: Partial<TranscriptLine>, create?: TranscriptLine) => {
+      setTranscript((prev) => {
+        const index = prev.findIndex((line) => line.id === id);
+        if (index === -1) {
+          return create
+            ? [...prev, { ...create, ...patch }].slice(-MAX_TRANSCRIPT_LINES)
+            : prev;
+        }
+        const next = [...prev];
+        next[index] = { ...next[index], ...patch };
+        return next;
+      });
+    },
+    [],
+  );
+
+  const removeLine = useCallback((id: string) => {
+    setTranscript((prev) => prev.filter((line) => line.id !== id));
+  }, []);
+
+  /** Add something the other person said as context only (no response) */
+  const addContextMessage = useCallback((text: string) => {
+    const timestamp = Date.now();
+    setConversation((prev) => ({
+      ...prev,
+      messages: [
+        {
+          id: generateMessageId("user", timestamp),
+          role: "user" as const,
+          content: text,
+          timestamp,
+          audioSource: "system_audio" as const,
+          speakerLabel: "interviewer" as const,
+        },
+        ...prev.messages,
+      ],
+      updatedAt: timestamp,
+      title: prev.title || generateConversationTitle(text),
+    }));
+  }, []);
+
+  const clearWaitTimer = () => {
+    if (waitTimerRef.current) {
+      clearTimeout(waitTimerRef.current);
+      waitTimerRef.current = null;
+    }
+  };
 
   // Handle continuous recording progress events AND error events
   useEffect(() => {
@@ -221,9 +380,14 @@ export function useSystemAudio() {
         // Speech discarded (too short)
         discardedUnlisten = await listen("speech-discarded", (event) => {
           systemSpeechActiveRef.current = false;
-          const reason = event.payload as string;
-          console.log("Speech discarded:", reason);
-          // Don't show error - this is expected behavior
+          const segment = liveSegmentRef.current;
+          if (segment !== null) removeLine(`them-${segment}`);
+          liveSegmentRef.current = null;
+          // A held fragment was waiting for more speech that never came
+          if (pendingFragmentRef.current && !waitTimerRef.current) {
+            scheduleWaitFallbackRef.current();
+          }
+          console.log("Speech discarded:", event.payload as string);
         });
       } catch (err) {
         console.error("Failed to setup continuous recording listeners:", err);
@@ -241,109 +405,313 @@ export function useSystemAudio() {
     };
   }, []);
 
-  // Handle single speech detection event (both VAD and continuous modes)
-  useEffect(() => {
-    let speechUnlisten: (() => void) | undefined;
-
-    const setupEventListener = async () => {
-      try {
-        speechUnlisten = await listen("speech-detected", async (event) => {
-          try {
-            systemSpeechActiveRef.current = false;
-            if (!capturing) return;
-
-            const base64Audio = event.payload as string;
-            // Convert to blob
-            const binaryString = atob(base64Audio);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-            }
-            const audioBlob = new Blob([bytes], { type: "audio/wav" });
-
-            if (!selectedSttProvider.provider) {
-              setError("No speech provider selected.");
-              return;
-            }
-
-            const providerConfig = allSttProviders.find(
-              (p) => p.id === selectedSttProvider.provider
-            );
-
-            if (!providerConfig) {
-              setError("Speech provider config not found.");
-              return;
-            }
-
-            setIsProcessing(true);
-
-            // Add timeout wrapper for STT request (30 seconds)
-            const sttPromise = fetchSTT({
-              provider: providerConfig,
-              selectedProvider: selectedSttProvider,
-              audio: audioBlob,
-              source: "system_audio",
-            });
-
-            const timeoutPromise = new Promise<never>((_, reject) => {
-              setTimeout(
-                () => reject(new Error("Speech transcription timed out (30s)")),
-                30000
-              );
-            });
-
-            try {
-              const result = await Promise.race([
-                sttPromise,
-                timeoutPromise,
-              ]);
-              const transcription = result.text;
-
-              if (transcription.trim()) {
-                setLastTranscription(transcription);
-                setError("");
-
-                const effectiveSystemPrompt = useSystemPrompt
-                  ? systemPrompt || DEFAULT_SYSTEM_PROMPT
-                  : contextContent || DEFAULT_SYSTEM_PROMPT;
-
-                const previousMessages = toHistory(conversation.messages);
-
-                await processWithAI(
-                  transcription,
-                  effectiveSystemPrompt,
-                  previousMessages
-                );
-              } else {
-                setError("Received empty transcription");
-              }
-            } catch (sttError: any) {
-              console.error("STT Error:", sttError);
-              setError(sttError.message || "Failed to transcribe audio");
-              setIsPopoverOpen(true);
-            }
-          } catch (err) {
-            setError("Failed to process speech");
-          } finally {
-            setIsProcessing(false);
-          }
-        });
-      } catch (err) {
-        setError("Failed to setup speech listener");
+  // AI Processing function
+  const processWithAI = useCallback(
+    async (
+      transcription: string,
+      prompt: string,
+      previousMessages: Message[],
+      options: { recordUserMessage?: boolean } = {},
+    ) => {
+      const { recordUserMessage = true } = options;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
-    };
 
-    setupEventListener();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
-    return () => {
-      if (speechUnlisten) speechUnlisten();
-    };
-  }, [
-    capturing,
-    selectedSttProvider,
-    allSttProviders,
-    conversation.messages.length,
-  ]);
+      // Record what they said right away, so it stays in the conversation
+      // even if this response is superseded before it finishes
+      if (recordUserMessage) {
+        setLastTranscription(transcription);
+        const timestamp = Date.now();
+        setConversation((prev) => ({
+          ...prev,
+          messages: [
+            {
+              id: generateMessageId("user", timestamp),
+              role: "user" as const,
+              content: transcription,
+              timestamp,
+              audioSource: "system_audio" as const,
+              speakerLabel: "interviewer" as const,
+            },
+            ...prev.messages,
+          ],
+          updatedAt: timestamp,
+          title: prev.title || generateConversationTitle(transcription),
+        }));
+      }
+
+      try {
+        setIsAIProcessing(true);
+        setLastAIResponse("");
+        setError("");
+
+        let fullResponse = "";
+
+        if (!selectedAIProvider.provider) {
+          setError("No AI provider selected.");
+          return;
+        }
+
+        const provider = allAiProviders.find(
+          (p) => p.id === selectedAIProvider.provider,
+        );
+        if (!provider) {
+          setError("AI provider config not found.");
+          return;
+        }
+
+        try {
+          for await (const chunk of fetchAIResponse({
+            provider,
+            selectedProvider: selectedAIProvider,
+            systemPrompt: prompt,
+            history: previousMessages,
+            userMessage: transcription,
+            imagesBase64: [],
+            signal: controller.signal,
+          })) {
+            if (controller.signal.aborted) break;
+            fullResponse += chunk;
+            setLastAIResponse((prev) => prev + chunk);
+          }
+        } catch (aiError: any) {
+          if (!controller.signal.aborted) {
+            setError(aiError.message || "Failed to get AI response");
+          }
+        }
+
+        if (fullResponse && !controller.signal.aborted) {
+          const timestamp = Date.now();
+          setConversation((prev) => ({
+            ...prev,
+            messages: [
+              {
+                id: generateMessageId("assistant", timestamp),
+                role: "assistant" as const,
+                content: fullResponse,
+                timestamp,
+              },
+              ...prev.messages,
+            ],
+            updatedAt: timestamp,
+          }));
+        }
+      } catch (err) {
+        setError("Failed to get AI response");
+      } finally {
+        if (abortControllerRef.current === controller) {
+          setIsAIProcessing(false);
+        }
+      }
+    },
+    [selectedAIProvider, allAiProviders],
+  );
+  const processWithAIRef = useRef(processWithAI);
+  processWithAIRef.current = processWithAI;
+
+  /** Answer what the other person said with the selected AI provider */
+  const respondTo = (text: string) => {
+    lastAnsweredRef.current = text;
+    processWithAIRef.current(
+      text,
+      effectivePromptRef.current(),
+      toHistory(conversationRef.current.messages),
+    );
+  };
+
+  /** A held "wait" fragment gets answered if no more speech follows */
+  const scheduleWaitFallback = () => {
+    clearWaitTimer();
+    waitTimerRef.current = setTimeout(() => {
+      waitTimerRef.current = null;
+      const pending = pendingFragmentRef.current;
+      if (!pending || systemSpeechActiveRef.current) return;
+      pendingFragmentRef.current = "";
+      respondTo(pending);
+    }, WAIT_FALLBACK_MS);
+  };
+  const scheduleWaitFallbackRef = useRef(scheduleWaitFallback);
+  scheduleWaitFallbackRef.current = scheduleWaitFallback;
+
+  /** Decide whether a finished transcript of the other person gets a response */
+  const handleTheirTurn = async (text: string, lineId: string) => {
+    clearWaitTimer();
+    const merged = pendingFragmentRef.current
+      ? `${pendingFragmentRef.current} ${text}`
+      : text;
+    pendingFragmentRef.current = "";
+
+    if (forceRespondRef.current || !getTurnJudgeEnabled()) {
+      forceRespondRef.current = false;
+      upsertLine(lineId, { verdict: "respond" });
+      respondTo(merged);
+      return;
+    }
+
+    const { selectedSttProvider: stt } = sttRef.current;
+    const groqKey =
+      stt.provider === "groq"
+        ? stt.variables?.api_key || stt.variables?.API_KEY
+        : undefined;
+    const earlier = transcriptRef.current
+      .filter((line) => line.status === "final" && line.id !== lineId)
+      .slice(-JUDGE_CONTEXT_LINES)
+      .map(
+        (line) => `${line.speaker === "you" ? "You" : "Them"}: ${line.text}`,
+      );
+
+    const { verdict, source } = await judgeTurn({
+      mode: assistantModeRef.current,
+      latest: merged,
+      earlier,
+      lastAnswered: lastAnsweredRef.current,
+      groqKey,
+      keys: getTurnJudgeKeys(),
+    });
+    console.log(`[turn judge] ${verdict} via ${source}: ${merged}`);
+    upsertLine(lineId, { verdict });
+
+    // Ctrl+G pressed while the judge was thinking
+    if (forceRespondRef.current) {
+      forceRespondRef.current = false;
+      respondTo(merged);
+      return;
+    }
+
+    if (verdict === "respond") {
+      respondTo(merged);
+    } else if (verdict === "wait") {
+      pendingFragmentRef.current = merged;
+      scheduleWaitFallback();
+    } else {
+      addContextMessage(merged);
+    }
+  };
+  const handleTheirTurnRef = useRef(handleTheirTurn);
+  handleTheirTurnRef.current = handleTheirTurn;
+
+  /** Transcribe a finished system-audio segment: Groq, else local Whisper */
+  const handleSpeechDetected = async (base64Audio: string) => {
+    systemSpeechActiveRef.current = false;
+    if (!capturingRef.current) return;
+
+    const segment = liveSegmentRef.current;
+    liveSegmentRef.current = null;
+    const lineId = segment !== null ? `them-${segment}` : `them-${Date.now()}`;
+    upsertLine(
+      lineId,
+      { status: "refining" },
+      {
+        id: lineId,
+        speaker: "them",
+        text: "",
+        status: "refining",
+        timestamp: Date.now(),
+      },
+    );
+
+    const audioBlob = base64ToWavBlob(base64Audio);
+    const { selectedSttProvider: stt, allSttProviders: providers } =
+      sttRef.current;
+    const providerConfig = providers.find((p) => p.id === stt.provider);
+
+    setIsProcessing(true);
+    let text = "";
+    try {
+      if (!providerConfig) throw new Error("No speech provider selected.");
+      const result = await withTimeout(
+        fetchSTT({
+          provider: providerConfig,
+          selectedProvider: stt,
+          audio: audioBlob,
+          source: "system_audio",
+        }),
+        30000,
+        "Speech transcription timed out (30s)",
+      );
+      text = result.text.trim();
+      setError("");
+    } catch (sttError: any) {
+      // Rate limited or offline: keep going on the local transcript
+      if (isLocalWhisperReady()) {
+        try {
+          text = await transcribeLocally(audioBlob);
+          console.warn("Cloud STT failed, used local Whisper:", sttError);
+        } catch (localError) {
+          console.error("Local Whisper fallback failed:", localError);
+        }
+      }
+      if (!text) {
+        console.error("STT Error:", sttError);
+        setError(sttError.message || "Failed to transcribe audio");
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+
+    if (!text) {
+      removeLine(lineId);
+      return;
+    }
+    upsertLine(lineId, { text, status: "final" });
+
+    // Judge turns one at a time, in order
+    turnQueueRef.current = turnQueueRef.current
+      .then(() => handleTheirTurnRef.current(text, lineId))
+      .catch((err) => console.error("Turn handling failed:", err));
+  };
+  const handleSpeechDetectedRef = useRef(handleSpeechDetected);
+  handleSpeechDetectedRef.current = handleSpeechDetected;
+
+  // System audio events: finished segments, live partials, speech starts
+  useEffect(() => {
+    const unlisteners: Array<() => void> = [];
+
+    listen<string>("speech-detected", (event) => {
+      handleSpeechDetectedRef.current(event.payload);
+    }).then((fn) => unlisteners.push(fn));
+
+    // Track when the other person starts talking (mic bleed filter, live
+    // transcript line, and holding a "wait" fragment open)
+    listen<number | null>("speech-start", (event) => {
+      systemSpeechActiveRef.current = true;
+      lastSystemSpeechStartRef.current = Date.now();
+      clearWaitTimer();
+      if (typeof event.payload === "number") {
+        liveSegmentRef.current = event.payload;
+      }
+    }).then((fn) => unlisteners.push(fn));
+
+    listen<{ segment_id: number; text: string }>(
+      "transcript-partial",
+      (event) => {
+        const { segment_id, text } = event.payload;
+        if (segment_id !== liveSegmentRef.current || !capturingRef.current) {
+          return;
+        }
+        const cleaned = cleanLocalTranscript(text);
+        if (!cleaned) return;
+        const id = `them-${segment_id}`;
+        upsertLine(
+          id,
+          { text: cleaned },
+          {
+            id,
+            speaker: "them",
+            text: cleaned,
+            status: "live",
+            timestamp: Date.now(),
+          },
+        );
+      },
+    ).then((fn) => unlisteners.push(fn));
+
+    return () => unlisteners.forEach((fn) => fn());
+  }, [upsertLine]);
 
   // Context management functions
   const saveContextSettings = useCallback(
@@ -355,13 +723,13 @@ export function useSystemAudio() {
         };
         safeLocalStorage.setItem(
           STORAGE_KEYS.SYSTEM_AUDIO_CONTEXT,
-          JSON.stringify(contextSettings)
+          JSON.stringify(contextSettings),
         );
       } catch (error) {
         console.error("Failed to save context settings:", error);
       }
     },
-    []
+    [],
   );
 
   const updateUseSystemPrompt = useCallback(
@@ -369,7 +737,7 @@ export function useSystemAudio() {
       setUseSystemPrompt(value);
       saveContextSettings(value, contextContent);
     },
-    [contextContent, saveContextSettings]
+    [contextContent, saveContextSettings],
   );
 
   const updateContextContent = useCallback(
@@ -377,7 +745,7 @@ export function useSystemAudio() {
       setContextContent(content);
       saveContextSettings(useSystemPrompt, content);
     },
-    [useSystemPrompt, saveContextSettings]
+    [useSystemPrompt, saveContextSettings],
   );
 
   // Quick actions management
@@ -385,7 +753,7 @@ export function useSystemAudio() {
     try {
       safeLocalStorage.setItem(
         STORAGE_KEYS.SYSTEM_AUDIO_QUICK_ACTIONS,
-        JSON.stringify(actions)
+        JSON.stringify(actions),
       );
     } catch (error) {
       console.error("Failed to save quick actions:", error);
@@ -400,7 +768,7 @@ export function useSystemAudio() {
         saveQuickActions(newActions);
       }
     },
-    [quickActions, saveQuickActions]
+    [quickActions, saveQuickActions],
   );
 
   const removeQuickAction = useCallback(
@@ -409,46 +777,172 @@ export function useSystemAudio() {
       setQuickActions(newActions);
       saveQuickActions(newActions);
     },
-    [quickActions, saveQuickActions]
+    [quickActions, saveQuickActions],
   );
+
+  /**
+   * History for an on-demand request: the conversation so far plus anything
+   * not yet in it (a held fragment, or what they are saying right now).
+   */
+  const historyWithLiveContext = (): Message[] => {
+    const history = toHistory(conversationRef.current.messages);
+    if (pendingFragmentRef.current) {
+      history.push({ role: "user", content: pendingFragmentRef.current });
+    }
+    const live = transcriptRef.current.find(
+      (line) => line.speaker === "them" && line.status !== "final" && line.text,
+    );
+    if (live) {
+      history.push({
+        role: "user",
+        content: `(still speaking, rough transcript) ${live.text}`,
+      });
+    }
+    return history;
+  };
 
   const handleQuickActionClick = async (action: string) => {
     setError("");
+    await processWithAI(
+      action,
+      getEffectiveSystemPrompt(),
+      historyWithLiveContext(),
+      { recordUserMessage: false },
+    );
+  };
 
-    const effectiveSystemPrompt = useSystemPrompt
-      ? systemPrompt || DEFAULT_SYSTEM_PROMPT
-      : contextContent || DEFAULT_SYSTEM_PROMPT;
+  /** Hotkey helpers (Ctrl+1–4): stream into their own card, never stored */
+  const runCopilotAction = async (actionId: CopilotActionId) => {
+    const action = getCopilotAction(actionId);
+    if (!action) return;
+    const hasContext =
+      conversationRef.current.messages.length > 0 ||
+      transcriptRef.current.length > 0;
+    if (!capturingRef.current && !hasContext) return;
 
-    // Include the most recent transcription in conversation history if it exists
-    let updatedMessages = [...conversation.messages];
+    helperAbortRef.current?.abort();
+    const controller = new AbortController();
+    helperAbortRef.current = controller;
+    setHelper({ actionId, label: action.label, text: "", loading: true });
 
-    if (lastTranscription && lastTranscription.trim()) {
-      const lastMessage = updatedMessages[updatedMessages.length - 1];
-      // Only add if it's not already the last message
-      if (!lastMessage || lastMessage.content !== lastTranscription) {
-        const timestamp = Date.now();
-        const userMessage = {
-          id: generateMessageId("user", timestamp),
-          role: "user" as const,
-          content: lastTranscription,
-          timestamp,
-        };
-        updatedMessages.push(userMessage);
-
-        // Update conversation state with the latest transcription
-        setConversation((prev) => ({
-          ...prev,
-          messages: [userMessage, ...prev.messages],
-          updatedAt: timestamp,
-          title: prev.title || generateConversationTitle(lastTranscription),
-        }));
-      }
+    const provider = allAiProviders.find(
+      (p) => p.id === selectedAIProvider.provider,
+    );
+    if (!provider) {
+      setHelper({
+        actionId,
+        label: action.label,
+        text: "",
+        loading: false,
+        error: "No AI provider selected.",
+      });
+      return;
     }
 
-    const previousMessages = toHistory(updatedMessages);
-
-    await processWithAI(action, effectiveSystemPrompt, previousMessages);
+    let text = "";
+    try {
+      for await (const chunk of fetchAIResponse({
+        provider,
+        selectedProvider: selectedAIProvider,
+        systemPrompt: getEffectiveSystemPrompt(),
+        history: historyWithLiveContext(),
+        userMessage: copilotActionMessage(action),
+        signal: controller.signal,
+      })) {
+        if (controller.signal.aborted) return;
+        text += chunk;
+        setHelper((prev) =>
+          prev && prev.actionId === actionId ? { ...prev, text } : prev,
+        );
+      }
+      if (!controller.signal.aborted) {
+        setHelper((prev) =>
+          prev && prev.actionId === actionId
+            ? { ...prev, loading: false }
+            : prev,
+        );
+      }
+    } catch (err: any) {
+      if (controller.signal.aborted) return;
+      setHelper({
+        actionId,
+        label: action.label,
+        text,
+        loading: false,
+        error: err?.message || "Failed to get a response",
+      });
+    }
   };
+  const runCopilotActionRef = useRef(runCopilotAction);
+  runCopilotActionRef.current = runCopilotAction;
+
+  const dismissHelper = useCallback(() => {
+    helperAbortRef.current?.abort();
+    setHelper(null);
+  }, []);
+
+  /** Notes + follow-up email for the conversation that just ended */
+  const runWrapUp = async (
+    mode: Exclude<AssistantMode, "none">,
+    messages: ChatMessage[],
+  ) => {
+    const provider = allAiProviders.find(
+      (p) => p.id === selectedAIProvider.provider,
+    );
+    if (!provider) return;
+
+    wrapUpAbortRef.current?.abort();
+    const controller = new AbortController();
+    wrapUpAbortRef.current = controller;
+    setWrapUp({ mode, text: "", loading: true });
+
+    let text = "";
+    try {
+      for await (const chunk of fetchAIResponse({
+        provider,
+        selectedProvider: selectedAIProvider,
+        systemPrompt: getEffectiveSystemPrompt(),
+        history: toHistory(messages),
+        userMessage: wrapUpMessage(mode),
+        signal: controller.signal,
+      })) {
+        if (controller.signal.aborted) return;
+        text += chunk;
+        setWrapUp((prev) => (prev ? { ...prev, text } : prev));
+      }
+      if (controller.signal.aborted) return;
+      setWrapUp((prev) => (prev ? { ...prev, loading: false } : prev));
+      if (text) {
+        const timestamp = Date.now();
+        setConversation((prev) => ({
+          ...prev,
+          messages: [
+            {
+              id: generateMessageId("assistant", timestamp),
+              role: "assistant" as const,
+              content: `**Wrap-up**\n\n${text}`,
+              timestamp,
+            },
+            ...prev.messages,
+          ],
+          updatedAt: timestamp,
+        }));
+      }
+    } catch (err: any) {
+      if (controller.signal.aborted) return;
+      setWrapUp({
+        mode,
+        text,
+        loading: false,
+        error: err?.message || "Failed to write the wrap-up",
+      });
+    }
+  };
+
+  const dismissWrapUp = useCallback(() => {
+    wrapUpAbortRef.current?.abort();
+    setWrapUp(null);
+  }, []);
 
   // Start continuous recording manually
   const startContinuousRecording = useCallback(async () => {
@@ -490,89 +984,13 @@ export function useSystemAudio() {
     }
   }, [isContinuousMode, isRecordingInContinuousMode]);
 
-  // AI Processing function
-  const processWithAI = useCallback(
-    async (
-      transcription: string,
-      prompt: string,
-      previousMessages: Message[]
-    ) => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-
-      abortControllerRef.current = new AbortController();
-
-      try {
-        setIsAIProcessing(true);
-        setLastAIResponse("");
-        setError("");
-
-        let fullResponse = "";
-
-        if (!selectedAIProvider.provider) {
-          setError("No AI provider selected.");
-          return;
-        }
-
-        const provider = allAiProviders.find(
-          (p) => p.id === selectedAIProvider.provider
-        );
-        if (!provider) {
-          setError("AI provider config not found.");
-          return;
-        }
-
-        try {
-          for await (const chunk of fetchAIResponse({
-            provider,
-            selectedProvider: selectedAIProvider,
-            systemPrompt: prompt,
-            history: previousMessages,
-            userMessage: transcription,
-            imagesBase64: [],
-          })) {
-            fullResponse += chunk;
-            setLastAIResponse((prev) => prev + chunk);
-          }
-        } catch (aiError: any) {
-          setError(aiError.message || "Failed to get AI response");
-        }
-
-        if (fullResponse) {
-          const timestamp = Date.now();
-          setConversation((prev) => ({
-            ...prev,
-            messages: [
-              {
-                id: generateMessageId("user", timestamp),
-                role: "user" as const,
-                content: transcription,
-                timestamp,
-                audioSource: "system_audio" as const,
-                speakerLabel: "interviewer" as const,
-              },
-              {
-                id: generateMessageId("assistant", timestamp + 1),
-                role: "assistant" as const,
-                content: fullResponse,
-                timestamp: timestamp + 1,
-              },
-              ...prev.messages,
-            ],
-            updatedAt: timestamp,
-            title: prev.title || generateConversationTitle(transcription),
-          }));
-        }
-      } catch (err) {
-        setError("Failed to get AI response");
-      } finally {
-        setIsAIProcessing(false);
-        // No auto-restart - user manually controls when to start next recording
-      }
-    },
-    [selectedAIProvider, allAiProviders, conversation.messages]
-  );
+  const resetTurnState = () => {
+    clearWaitTimer();
+    pendingFragmentRef.current = "";
+    lastAnsweredRef.current = "";
+    forceRespondRef.current = false;
+    liveSegmentRef.current = null;
+  };
 
   const startCapture = useCallback(async () => {
     try {
@@ -596,6 +1014,19 @@ export function useSystemAudio() {
         createdAt: 0,
         updatedAt: 0,
       });
+      setTranscript([]);
+      resetTurnState();
+      helperAbortRef.current?.abort();
+      setHelper(null);
+      wrapUpAbortRef.current?.abort();
+      setWrapUp(null);
+
+      // Live captions: load the local model in the background
+      setLiveTranscriptionReady(false);
+      prepareLiveTranscription(
+        getLiveTranscriptionModel(),
+        getLiveTranscriptionEnabled(),
+      ).then(setLiveTranscriptionReady);
 
       setCapturing(true);
       setIsPopoverOpen(true);
@@ -629,34 +1060,73 @@ export function useSystemAudio() {
     }
   }, [vadConfig, selectedAudioDevices.output.id]);
 
-  const stopCapture = useCallback(async () => {
-    try {
-      // Abort any ongoing AI requests
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
+  /**
+   * Stop listening. When a mode was active (passed in by the mode shortcut,
+   * which clears the mode first) and the conversation had substance, write
+   * the wrap-up notes.
+   */
+  const stopCapture = useCallback(
+    async (endedMode?: AssistantMode) => {
+      const mode =
+        typeof endedMode === "string" ? endedMode : assistantModeRef.current;
+      try {
+        // Abort any ongoing AI requests
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+        helperAbortRef.current?.abort();
+
+        // Stop the audio capture
+        await invoke<string>("stop_system_audio_capture");
+        setLiveTranscription(false).catch(() => {});
+
+        // A fragment still waiting for more speech is part of the record
+        let messages = conversationRef.current.messages;
+        if (pendingFragmentRef.current) {
+          const timestamp = Date.now();
+          const pending: ChatMessage = {
+            id: generateMessageId("user", timestamp),
+            role: "user",
+            content: pendingFragmentRef.current,
+            timestamp,
+            audioSource: "system_audio",
+            speakerLabel: "interviewer",
+          };
+          messages = [pending, ...messages];
+          addContextMessage(pending.content);
+        }
+        resetTurnState();
+
+        // Reset ALL states
+        setCapturing(false);
+        setIsProcessing(false);
+        setIsAIProcessing(false);
+        setIsContinuousMode(false);
+        setIsRecordingInContinuousMode(false);
+        setRecordingProgress(0);
+        setLastTranscription("");
+        setLastAIResponse("");
+        setError("");
+        setHelper(null);
+        setIsPopoverOpen(false);
+
+        const theirTurns = messages.filter(
+          (m) => m.role === "user" && m.speakerLabel !== "user",
+        ).length;
+        if (mode !== "none" && getWrapUpEnabled() && theirTurns >= 2) {
+          runWrapUpRef.current(mode, messages);
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError(`Failed to stop capture: ${errorMessage}`);
+        console.error("Stop capture error:", err);
       }
-
-      // Stop the audio capture
-      await invoke<string>("stop_system_audio_capture");
-
-      // Reset ALL states
-      setCapturing(false);
-      setIsProcessing(false);
-      setIsAIProcessing(false);
-      setIsContinuousMode(false);
-      setIsRecordingInContinuousMode(false);
-      setRecordingProgress(0);
-      setLastTranscription("");
-      setLastAIResponse("");
-      setError("");
-      setIsPopoverOpen(false);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`Failed to stop capture: ${errorMessage}`);
-      console.error("Stop capture error:", err);
-    }
-  }, []);
+    },
+    [addContextMessage],
+  );
+  const runWrapUpRef = useRef(runWrapUp);
+  runWrapUpRef.current = runWrapUp;
 
   // Manual stop for continuous recording
   const manualStopAndSend = useCallback(async () => {
@@ -687,17 +1157,30 @@ export function useSystemAudio() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen("speech-flush-empty", () => {
+      forceRespondRef.current = false;
+      // A held fragment is exactly what "generate now" should answer
+      if (pendingFragmentRef.current) {
+        clearWaitTimer();
+        const pending = pendingFragmentRef.current;
+        pendingFragmentRef.current = "";
+        respondToRef.current(pending);
+        return;
+      }
       quickActionRef.current(GENERATE_NOW_MESSAGE);
     }).then((fn) => {
       unlisten = fn;
     });
     return () => unlisten?.();
   }, []);
+  const respondToRef = useRef(respondTo);
+  respondToRef.current = respondTo;
 
   useEffect(() => {
     globalShortcuts.registerCustomShortcutCallback("generate_now", async () => {
       if (!capturing || isAIProcessing) return;
       if (!isContinuousMode) {
+        // The flushed segment skips the turn judge
+        forceRespondRef.current = true;
         await invoke("force_flush_speech");
       } else if (isRecordingInContinuousMode) {
         await manualStopAndSend();
@@ -712,6 +1195,15 @@ export function useSystemAudio() {
     isRecordingInContinuousMode,
     manualStopAndSend,
   ]);
+
+  // Helper hotkeys (Ctrl+1–4)
+  useEffect(() => {
+    COPILOT_ACTIONS.forEach((action) => {
+      globalShortcuts.registerCustomShortcutCallback(action.shortcutId, () => {
+        runCopilotActionRef.current(action.id);
+      });
+    });
+  }, []);
 
   const handleSetup = useCallback(async () => {
     try {
@@ -744,7 +1236,8 @@ export function useSystemAudio() {
       setupRequired ||
       isAIProcessing ||
       !!lastAIResponse ||
-      !!error;
+      !!error ||
+      !!wrapUp;
     setIsPopoverOpen(shouldOpenPopover);
     resizeWindow(shouldOpenPopover);
   }, [
@@ -753,6 +1246,7 @@ export function useSystemAudio() {
     isAIProcessing,
     lastAIResponse,
     error,
+    wrapUp,
     resizeWindow,
   ]);
 
@@ -777,7 +1271,7 @@ export function useSystemAudio() {
       globalShortcuts.registerCustomShortcutCallback(actionId, async () => {
         if (capturing && assistantMode === mode) {
           setAssistantMode("none");
-          await stopCapture();
+          await stopCapture(mode);
           return;
         }
         setAssistantMode(mode);
@@ -793,6 +1287,8 @@ export function useSystemAudio() {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      helperAbortRef.current?.abort();
+      wrapUpAbortRef.current?.abort();
       invoke("stop_system_audio_capture").catch(() => {});
     };
   }, []);
@@ -843,45 +1339,42 @@ export function useSystemAudio() {
     conversation.updatedAt,
   ]);
 
-  // Track when the other person starts talking (used to filter mic bleed)
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listen("speech-start", () => {
-      systemSpeechActiveRef.current = true;
-      lastSystemSpeechStartRef.current = Date.now();
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => unlisten?.();
-  }, []);
-
   // Mic: the user's own words become context and never trigger a response.
   // Segments overlapping the other person's speech are dropped: without
   // headphones the mic hears the speakers too, and system audio has that.
-  const addUserUtterance = useCallback((text: string, startedAt: number) => {
-    if (
-      systemSpeechActiveRef.current ||
-      lastSystemSpeechStartRef.current >= startedAt
-    ) {
-      return;
-    }
-    const timestamp = Date.now();
-    setConversation((prev) => ({
-      ...prev,
-      messages: [
-        {
-          id: generateMessageId("user", timestamp),
-          role: "user" as const,
-          content: text,
-          timestamp,
-          audioSource: "mic" as const,
-          speakerLabel: "user" as const,
-        },
-        ...prev.messages,
-      ],
-      updatedAt: timestamp,
-    }));
-  }, []);
+  const addUserUtterance = useCallback(
+    (text: string, startedAt: number) => {
+      if (
+        systemSpeechActiveRef.current ||
+        lastSystemSpeechStartRef.current >= startedAt
+      ) {
+        return;
+      }
+      const timestamp = Date.now();
+      setConversation((prev) => ({
+        ...prev,
+        messages: [
+          {
+            id: generateMessageId("user", timestamp),
+            role: "user" as const,
+            content: text,
+            timestamp,
+            audioSource: "mic" as const,
+            speakerLabel: "user" as const,
+          },
+          ...prev.messages,
+        ],
+        updatedAt: timestamp,
+      }));
+      const id = `you-${timestamp}`;
+      upsertLine(
+        id,
+        {},
+        { id, speaker: "you", text, status: "final", timestamp },
+      );
+    },
+    [upsertLine],
+  );
 
   const startNewConversation = useCallback(() => {
     setConversation({
@@ -891,6 +1384,10 @@ export function useSystemAudio() {
       createdAt: 0,
       updatedAt: 0,
     });
+    setTranscript([]);
+    resetTurnState();
+    setHelper(null);
+    setWrapUp(null);
     setLastTranscription("");
     setLastAIResponse("");
     setError("");
@@ -928,7 +1425,7 @@ export function useSystemAudio() {
       if (!isPopoverOpen) return;
 
       const scrollElement = scrollAreaRef.current?.querySelector(
-        "[data-radix-scroll-area-viewport]"
+        "[data-radix-scroll-area-viewport]",
       ) as HTMLElement;
 
       if (!scrollElement) return;
@@ -1045,5 +1542,13 @@ export function useSystemAudio() {
     ignoreContinuousRecording,
     // Scroll area ref for keyboard navigation
     scrollAreaRef,
+    // Live transcript, hotkey helpers and wrap-up
+    transcript,
+    liveTranscriptionReady,
+    helper,
+    dismissHelper,
+    runCopilotAction,
+    wrapUp,
+    dismissWrapUp,
   };
 }

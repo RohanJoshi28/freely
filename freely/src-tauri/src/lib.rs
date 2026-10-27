@@ -130,6 +130,10 @@ pub fn run() {
             speaker::init_local_whisper,
             speaker::transcribe_local,
             speaker::get_local_whisper_status,
+            speaker::get_local_whisper_model,
+            speaker::download_local_whisper_model,
+            speaker::load_local_whisper_model,
+            speaker::set_live_transcription,
         ])
         .setup(|app| {
             // Migrate pluely.db → freely.db for existing users before the SQL plugin

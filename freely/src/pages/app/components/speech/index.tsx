@@ -24,6 +24,8 @@ import { PermissionFlow } from "./PermissionFlow";
 import { QuickActions } from "./QuickActions";
 import { Warning } from "./Warning";
 import { MicListener } from "./MicListener";
+import { LiveTranscript } from "./LiveTranscript";
+import { CopilotHotkeys, HelperCard, WrapUpPanel } from "./CopilotPanels";
 import { getMicEnabled } from "@/lib/storage";
 import { useSystemAudioType } from "@/hooks";
 import { useApp } from "@/contexts";
@@ -66,6 +68,12 @@ export const SystemAudio = (props: useSystemAudioType) => {
     ignoreContinuousRecording,
     scrollAreaRef,
     addUserUtterance,
+    transcript,
+    liveTranscriptionReady,
+    helper,
+    dismissHelper,
+    wrapUp,
+    dismissWrapUp,
   } = props;
 
   const { hasActiveLicense, supportsImages } = useApp();
@@ -184,6 +192,9 @@ export const SystemAudio = (props: useSystemAudioType) => {
           if (capturing && !open) {
             return;
           }
+          if (!open && wrapUp) {
+            dismissWrapUp();
+          }
           setIsPopoverOpen(open);
         }}
       >
@@ -201,7 +212,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
           </Button>
         </PopoverTrigger>
 
-        {(capturing || setupRequired || error) && (
+        {(capturing || setupRequired || error || wrapUp) && (
           <PopoverContent
             align="end"
             side="bottom"
@@ -275,6 +286,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                         className="h-6 w-6"
                         title="Close"
                         onClick={() => {
+                          dismissWrapUp();
                           setIsPopoverOpen(false);
                           resizeWindow(false);
                         }}
@@ -340,18 +352,38 @@ export const SystemAudio = (props: useSystemAudioType) => {
                     />
                   ) : (
                     <>
+                      {/* Notes written when listening stopped */}
+                      {wrapUp && <WrapUpPanel wrapUp={wrapUp} />}
+
+                      {/* Live transcript and helper hotkeys */}
+                      {capturing && (
+                        <>
+                          <LiveTranscript
+                            transcript={transcript}
+                            liveReady={liveTranscriptionReady}
+                          />
+                          <CopilotHotkeys />
+                        </>
+                      )}
+
+                      {helper && (
+                        <HelperCard helper={helper} onDismiss={dismissHelper} />
+                      )}
+
                       {/* Recording Panel */}
-                      <RecordingPanel
-                        isVadMode={isVadMode}
-                        isRecording={isRecordingInContinuousMode}
-                        isProcessing={isProcessing}
-                        isAIProcessing={isAIProcessing}
-                        recordingProgress={recordingProgress}
-                        maxDuration={vadConfig.max_recording_duration_secs}
-                        onStartRecording={startContinuousRecording}
-                        onStopAndSend={manualStopAndSend}
-                        onIgnore={ignoreContinuousRecording}
-                      />
+                      {capturing && (
+                        <RecordingPanel
+                          isVadMode={isVadMode}
+                          isRecording={isRecordingInContinuousMode}
+                          isProcessing={isProcessing}
+                          isAIProcessing={isAIProcessing}
+                          recordingProgress={recordingProgress}
+                          maxDuration={vadConfig.max_recording_duration_secs}
+                          onStartRecording={startContinuousRecording}
+                          onStopAndSend={manualStopAndSend}
+                          onIgnore={ignoreContinuousRecording}
+                        />
+                      )}
 
                       {/* AI Response */}
                       <ResultsSection

@@ -7,7 +7,7 @@ use hound::{WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::io::Cursor;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Listener, Manager};
@@ -145,6 +145,45 @@ pub fn force_flush_speech() {
     FORCE_FLUSH.store(true, Ordering::SeqCst);
 }
 
+/// Incremented at every speech start; tags `speech-start` and
+/// `transcript-partial` so the frontend can match partials to segments.
+static SEGMENT_ID: AtomicU64 = AtomicU64::new(0);
+/// Set while a live partial transcription is running, so at most one runs.
+static PARTIAL_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+/// Whisper's window is 30 s; partials only look at the tail of long segments.
+const PARTIAL_MAX_SECS: usize = 28;
+
+#[derive(Clone, Serialize)]
+struct TranscriptPartial {
+    segment_id: u64,
+    text: String,
+}
+
+/// Transcribe the speech so far with local Whisper on a blocking thread and
+/// emit it as `transcript-partial`. Skipped while a previous one is running.
+fn spawn_partial_transcription(app: &AppHandle, segment_id: u64, speech: &[f32], sr: u32) {
+    if !crate::speaker::local_whisper::live_transcription_active()
+        || PARTIAL_IN_FLIGHT.swap(true, Ordering::AcqRel)
+    {
+        return;
+    }
+    let tail_len = (sr as usize * PARTIAL_MAX_SECS).min(speech.len());
+    let tail = speech[speech.len() - tail_len..].to_vec();
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let normalized = normalize_audio_level(&tail, 0.1);
+        let samples = crate::speaker::local_whisper::resample_to_16k(&normalized, sr);
+        match crate::speaker::local_whisper::transcribe_blocking(&app, &samples) {
+            Ok(text) if !text.is_empty() => {
+                let _ = app.emit("transcript-partial", TranscriptPartial { segment_id, text });
+            }
+            Ok(_) => {}
+            Err(e) => warn!("Live transcription failed: {}", e),
+        }
+        PARTIAL_IN_FLIGHT.store(false, Ordering::Release);
+    });
+}
+
 // VAD-enabled capture - OPTIMIZED for real-time speech detection
 async fn run_vad_capture(
     app: AppHandle,
@@ -161,6 +200,10 @@ async fn run_vad_capture(
     let mut silence_chunks = 0;
     let mut speech_chunks = 0;
     let max_samples = sr as usize * 30; // 30s safety cap per utterance
+    let mut segment_id = SEGMENT_ID.load(Ordering::Acquire);
+    // Live partials: re-transcribe the growing segment every ~0.7 s of audio
+    let partial_interval = sr as usize * 7 / 10;
+    let mut next_partial_at = partial_interval;
 
     while let Some(sample) = stream.next().await {
         buffer.push_back(sample);
@@ -211,7 +254,9 @@ async fn run_vad_capture(
                     // Include pre-speech buffer for natural sound
                     speech_buffer.extend(pre_speech.drain(..));
 
-                    if let Err(e) = app.emit("speech-start", ()) {
+                    segment_id = SEGMENT_ID.fetch_add(1, Ordering::AcqRel) + 1;
+                    next_partial_at = speech_buffer.len() + partial_interval;
+                    if let Err(e) = app.emit("speech-start", segment_id) {
                         warn!("Failed to emit speech-start: {}", e);
                     }
                 }
@@ -219,6 +264,11 @@ async fn run_vad_capture(
                 speech_chunks += 1;
                 speech_buffer.extend_from_slice(&mono);
                 silence_chunks = 0; // Reset silence counter on any speech
+
+                if speech_buffer.len() >= next_partial_at {
+                    next_partial_at = speech_buffer.len() + partial_interval;
+                    spawn_partial_transcription(&app, segment_id, &speech_buffer, sr);
+                }
 
                 // Safety cap: force emit if exceeds 30s
                 if speech_buffer.len() > max_samples {

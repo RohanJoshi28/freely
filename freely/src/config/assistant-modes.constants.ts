@@ -14,6 +14,7 @@ const LIVE_RULES = `The user is LIVE in the conversation right now and only glan
 - NEVER ask the user for information, clarification or context, and never say you need more details. Always produce the best output you can from what you have.
 - Lines starting with "[You said]:" are the user's own words, heard through their microphone. Everything else the user sends is the other person. Never respond to, answer or evaluate the user's own words; use them only as context for what has already been asked or answered.
 - Prep notes from the user may appear below. They are optional: use them if present, but never depend on them.
+- A message starting with "[Copilot action]" is the user pressing a hotkey for a specific kind of help. Do exactly what it asks, in the format it gives, instead of the response format below. It is not something the other person said.
 - No preamble, no sign-off. Be skimmable.`;
 
 export const COFFEE_CHAT_PROMPT = `You are a silent coffee-chat copilot for a networking conversation (coffee chat, informational interview, mentor chat).
@@ -72,6 +73,65 @@ export const ASSISTANT_MODES: AssistantModeOption[] = [
 ];
 
 export const getAssistantModeOption = (
-  mode: AssistantMode
+  mode: AssistantMode,
 ): AssistantModeOption | undefined =>
   ASSISTANT_MODES.find((m) => m.id === mode);
+
+export type CopilotActionId = "catch_up" | "define" | "clarify" | "say_next";
+
+export interface CopilotAction {
+  id: CopilotActionId;
+  /** Global shortcut action id (see DEFAULT_SHORTCUT_ACTIONS) */
+  shortcutId: string;
+  label: string;
+  instruction: string;
+}
+
+// Adapted from Natively's live helpers (catch me up, define, sound smart)
+export const COPILOT_ACTIONS: CopilotAction[] = [
+  {
+    id: "catch_up",
+    shortcutId: "copilot_catch_up",
+    label: "Catch me up",
+    instruction: `Catch me up: I zoned out. Using only the conversation so far (mostly the last few minutes), write at most four short lines, each starting with its label, skipping any that don't apply: "Now:" the topic on the table right now; "They said:" the key point or detail I should not miss; "Asked of me:" anything they asked me or are waiting on; "Next:" what I should say or do right now. Keep names, numbers and dates exactly as said. Never add anything the conversation does not say.`,
+  },
+  {
+    id: "define",
+    shortcutId: "copilot_define",
+    label: "Define",
+    instruction: `Define: find the most recent term, acronym, company, product, person or concept in the conversation that I might not know. Respond with the term in bold, then at most two short sentences on what it is and what it means in this conversation. If the conversation says what it means, use that; otherwise give the standard meaning and never invent a company-specific one. If there are two recent unfamiliar terms, cover both the same way.`,
+  },
+  {
+    id: "clarify",
+    shortcutId: "copilot_clarify",
+    label: "What they're asking",
+    instruction: `What they're really asking: look at the most recent question or request from the other person. Respond with **They're asking** (one line, plain words, including what they are actually trying to learn about me) and **Cover** (2–3 bullets of what a strong answer must include). If it's genuinely ambiguous, give the most likely reading and one short clarifying question I could ask out loud.`,
+  },
+  {
+    id: "say_next",
+    shortcutId: "copilot_say_next",
+    label: "Say this",
+    instruction: `Say something smart: give me ONE specific, insightful thing to say right now that builds on a detail the other person just said: a sharp observation, a connection to something earlier, or a question that shows I was really listening. One or two sentences, in my voice, ready to say out loud, no quotation marks, no preamble. Never generic praise and never a summary.`,
+  },
+];
+
+export const getCopilotAction = (
+  id: CopilotActionId,
+): CopilotAction | undefined => COPILOT_ACTIONS.find((a) => a.id === id);
+
+export const copilotActionMessage = (action: CopilotAction): string =>
+  `[Copilot action] ${action.instruction}`;
+
+/** Sent when listening stops: notes plus follow-up material for the mode that was active */
+export const wrapUpMessage = (mode: Exclude<AssistantMode, "none">): string =>
+  mode === "coffee-chat"
+    ? `[Copilot action] Wrap-up: the coffee chat just ended. Using the whole conversation, write:
+**Who** — who they are, their role and path (1–2 lines).
+**What I learned** — 3–5 bullets of the most useful specifics they shared (names, numbers, companies, advice), exactly as said.
+**Follow-ups I promised or should do** — bullets: things I said I'd do, people or resources they mentioned, things to look up. Write "None" if there are none.
+**Thank-you email** — a short, warm email (under 120 words) with a subject line, that thanks them and references two specific things they said, plus any follow-up I promised. Sign it as me without inventing my name: use "[Your name]".`
+    : `[Copilot action] Wrap-up: the interview just ended. Using the whole conversation, write:
+**Questions asked** — a numbered list of every question the interviewer asked, in order, each in a few words.
+**How it went** — for each question where my own answer is in the conversation ("[You said]:" lines), one line on what landed and one concrete improvement. Skip questions where my answer wasn't captured.
+**Prep next** — 2–4 bullets: topics to study or stories to prepare for the next round, based on what they focused on.
+**Thank-you email** — a short email (under 120 words) with a subject line that thanks the interviewer and references one or two specific topics from the conversation. Sign it as "[Your name]".`;
