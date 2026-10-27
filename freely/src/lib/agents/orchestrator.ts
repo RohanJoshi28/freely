@@ -188,7 +188,7 @@ export class FreelyAgentOrchestrator {
     // Only the current userMessage is sent — Claude CLI maintains full history internally.
     try {
       this.claudeTool
-        .executePromptWithStreaming(sessionId, params.userMessage, undefined, undefined, callbacks, undefined, params.model)
+        .executePromptWithStreaming(sessionId, params.userMessage, undefined, undefined, callbacks, undefined, params.model, params.systemPrompt)
         .then((result) => {
           if (result.error) finish(new Error(result.error));
           else finish();

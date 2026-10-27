@@ -140,7 +140,8 @@ export class FreelyClaudeTool {
     permissionMode?: PermissionMode,
     streamingCallbacks?: StreamingCallbacks,
     _abortController?: AbortController,
-    model?: string
+    model?: string,
+    systemPrompt?: string
   ): Promise<FreelyExecutionResult> {
     const userMessageId = toMessageID(generateId());
 
@@ -191,6 +192,7 @@ export class FreelyClaudeTool {
         permissionMode,
         model,
         agentSessionId,
+        systemPrompt,
       };
 
       // Listen for real-time streaming events from the Rust backend
