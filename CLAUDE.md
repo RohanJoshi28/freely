@@ -1,5 +1,10 @@
 # Freely - AI Assistant Desktop App
 
+> **Read `freely/CLAUDE.md` first.** It documents this fork's purpose (Rohan's
+> hands-free coffee-chat / interview copilot), every change made to it, the
+> build/signing/dev-shell setup, and the backlog. The sections below are the
+> upstream template and mostly do not apply to this fork.
+
 ## Team Agents
 
 This repo is configured with a multi-agent dev team. Use the appropriate specialist agent for each task:
