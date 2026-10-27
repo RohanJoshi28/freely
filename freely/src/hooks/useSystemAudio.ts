@@ -17,6 +17,7 @@ import {
   AssistantMode,
   AssistantModeOption,
   COPILOT_ACTIONS,
+  ON_DEMAND_INSTRUCTION,
   GENERATION_PROFILES,
   GenerationProfileId,
   CopilotActionId,
@@ -123,9 +124,6 @@ export interface WrapUpState {
 
 export type useSystemAudioType = ReturnType<typeof useSystemAudio>;
 
-const GENERATE_NOW_MESSAGE =
-  "(No new audio. The user asked for a response right now: respond to the most recent question or topic in the conversation so far.)";
-
 /** How long a "wait" verdict holds a fragment before answering anyway */
 const WAIT_FALLBACK_MS = 4000;
 /** Transcript lines kept on screen and given to the judge as context */
@@ -224,6 +222,8 @@ export function useSystemAudio() {
   const lastSystemSpeechStartRef = useRef(0);
   const isSavingRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  /** Set by MicListener: submits the user's in-progress speech */
+  const micFlushRef = useRef<(() => Promise<void>) | null>(null);
 
   // Live transcript / turn-taking state read from event listeners
   const liveSegmentRef = useRef<number | null>(null);
@@ -424,10 +424,16 @@ export function useSystemAudio() {
       previousMessages: Message[],
       options: {
         recordUserMessage?: boolean;
+        /** Appended to the request but not stored in the conversation */
+        instruction?: string;
         profileId?: GenerationProfileId;
       } = {},
     ) => {
-      const { recordUserMessage = true, profileId = "sonnet" } = options;
+      const {
+        recordUserMessage = true,
+        profileId = "sonnet",
+        instruction,
+      } = options;
       const profile = GENERATION_PROFILES[profileId];
       const effort = getThinkingLevel();
       currentProfileRef.current = profileId;
@@ -488,9 +494,9 @@ export function useSystemAudio() {
             selectedProvider: selectedAIProvider,
             systemPrompt: prompt,
             history: previousMessages,
-            userMessage: profile.instruction
-              ? `${transcription}\n\n${profile.instruction}`
-              : transcription,
+            userMessage: [transcription, profile.instruction, instruction]
+              .filter(Boolean)
+              .join("\n\n"),
             imagesBase64: [],
             agentOptions: {
               model: profile.model,
@@ -544,13 +550,15 @@ export function useSystemAudio() {
   const respondTo = (
     text: string,
     profileId: GenerationProfileId = "sonnet",
+    onDemand = false,
   ) => {
     lastAnsweredRef.current = text;
     processWithAIRef.current(
       text,
       effectivePromptRef.current(),
       toHistory(conversationRef.current.messages),
-      { profileId },
+      // A key press with no question gets topic information instead
+      { profileId, instruction: onDemand ? ON_DEMAND_INSTRUCTION : undefined },
     );
   };
 
@@ -580,7 +588,7 @@ export function useSystemAudio() {
     if (forced || !getTurnJudgeEnabled()) {
       forceProfileRef.current = null;
       upsertLine(lineId, { verdict: "respond" });
-      respondTo(merged, forced ?? "sonnet");
+      respondTo(merged, forced ?? "sonnet", !!forced);
       return;
     }
 
@@ -611,7 +619,7 @@ export function useSystemAudio() {
     const forcedLate = forceProfileRef.current;
     if (forcedLate) {
       forceProfileRef.current = null;
-      respondTo(merged, forcedLate);
+      respondTo(merged, forcedLate, true);
       return;
     }
 
@@ -1202,10 +1210,10 @@ export function useSystemAudio() {
         clearWaitTimer();
         const pending = pendingFragmentRef.current;
         pendingFragmentRef.current = "";
-        respondToRef.current(pending, profileId);
+        respondToRef.current(pending, profileId, true);
         return;
       }
-      quickActionRef.current(GENERATE_NOW_MESSAGE, profileId);
+      quickActionRef.current(ON_DEMAND_INSTRUCTION, profileId);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -1229,13 +1237,21 @@ export function useSystemAudio() {
         if (isAIProcessing && currentProfileRef.current === profileId) return;
         // The flushed segment skips the turn judge
         forceProfileRef.current = profileId;
+        // Include what the user is saying right now: their mic is otherwise
+        // only transcribed when they stop talking
+        if (micFlushRef.current) {
+          await micFlushRef.current();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          // Their segment ended meanwhile and already used this press
+          if (forceProfileRef.current !== profileId) return;
+        }
         if (!isContinuousMode) {
           await invoke("force_flush_speech");
         } else if (isRecordingInContinuousMode) {
           await manualStopAndSend();
         } else {
           forceProfileRef.current = null;
-          await quickActionRef.current(GENERATE_NOW_MESSAGE, profileId);
+          await quickActionRef.current(ON_DEMAND_INSTRUCTION, profileId);
         }
       });
     });
@@ -1603,6 +1619,7 @@ export function useSystemAudio() {
     ignoreContinuousRecording,
     // Scroll area ref for keyboard navigation
     scrollAreaRef,
+    micFlushRef,
     // Live transcript, hotkey helpers and wrap-up
     transcript,
     liveTranscriptionReady,

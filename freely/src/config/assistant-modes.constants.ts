@@ -181,6 +181,17 @@ export const GENERATION_PROFILES: Record<
     label: "Sonnet + web search",
     tools: "default",
     allowedTools: LOOKUP_TOOLS,
-    instruction: `(Search first: before answering, use WebSearch, and WebFetch if you need a page, to look up whatever makes the answer accurate and current: today's market moves, recent news, the company, the person, products, technical details, numbers. Keep it to 1–3 quick searches. Then answer the question itself with what you found: if they asked for a view or opinion, give a concrete one backed by the specific facts and numbers you found, not advice on how to structure an answer. End with a one-line **Sources:** list of links.)`,
+    instruction: `(Search first, always: your first action must be at least one WebSearch call, even if no question was asked. Use WebSearch, and WebFetch if you need a page, to look up whatever makes the response accurate and current: today's market moves, recent news, the company, the person, products, technical details, numbers. Keep it to 1–3 quick searches. Then respond with what you found: if there is a question, answer it (a concrete view backed by the facts you found if they asked for an opinion, never advice on how to structure an answer); if there is no question, put the most useful current facts in **Useful to know**. End with a one-line **Sources:** list of links.)`,
   },
 };
+
+/**
+ * Appended when the user presses Ctrl+G/H/S: answer a pending question, and
+ * otherwise give information that helps with whatever is being discussed
+ */
+export const ON_DEMAND_INSTRUCTION = `[Copilot action] The user pressed a key asking for help right now. Look at the latest part of the conversation, including the user's own words ("[You said]:" lines).
+- If the other person's latest words contain a question or request for the user that hasn't been answered yet, answer it in the usual format.
+- Otherwise there is nothing to answer: augment the user in this discussion with information about the topic being discussed right now (or the thing the user just said). Respond with:
+**Topic** — what's being discussed, in a few words.
+**Useful to know** — 3–5 bullets of specific, accurate facts, numbers, names, recent developments or concepts that would strengthen what the user is saying or about to say. Prioritise what they can use in the next minute.
+**Bring up** — 1–2 sharp points or questions the user could say next, ready to say out loud.`;

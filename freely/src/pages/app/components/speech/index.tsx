@@ -68,6 +68,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
     ignoreContinuousRecording,
     scrollAreaRef,
     addUserUtterance,
+    micFlushRef,
     transcript,
     liveTranscriptionReady,
     helper,
@@ -186,7 +187,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
   return (
     <>
       {capturing && getMicEnabled() && (
-        <MicListener onUserSpeech={addUserUtterance} />
+        <MicListener onUserSpeech={addUserUtterance} flushRef={micFlushRef} />
       )}
       <Popover
         open={isPopoverOpen}
