@@ -5,6 +5,12 @@ on:
     branches: [main]
     paths: ['freely/**', '.github/workflows/build.yml']
   workflow_dispatch:
+    inputs:
+      variant:
+        description: "release = normal app; devshell = loads the UI from http://localhost:1420 (run npm run dev locally)"
+        type: choice
+        default: release
+        options: [release, devshell]
 
 jobs:
   build-macos:
@@ -47,10 +53,15 @@ jobs:
           echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=ci" >> $GITHUB_ENV
 
       - name: Build Tauri app
-        run: npx tauri build --target aarch64-apple-darwin
+        run: |
+          if [ "${{ inputs.variant || 'release' }}" = "devshell" ]; then
+            npx tauri build --target aarch64-apple-darwin --config src-tauri/tauri.devshell.conf.json
+          else
+            npx tauri build --target aarch64-apple-darwin
+          fi
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: freely-macos-aarch64
+          name: freely-macos-aarch64${{ inputs.variant == 'devshell' && '-devshell' || '' }}
           path: freely/src-tauri/target/aarch64-apple-darwin/release/bundle/
