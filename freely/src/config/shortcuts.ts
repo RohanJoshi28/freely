@@ -52,6 +52,28 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
     },
   },
   {
+    id: "coffee_chat_mode",
+    name: "Coffee Chat",
+    description:
+      "Switch to coffee chat mode and start listening; press again to stop",
+    defaultKey: {
+      macos: "ctrl+k",
+      windows: "ctrl+alt+k",
+      linux: "ctrl+alt+k",
+    },
+  },
+  {
+    id: "interview_mode",
+    name: "Interview",
+    description:
+      "Switch to interview mode and start listening; press again to stop",
+    defaultKey: {
+      macos: "ctrl+i",
+      windows: "ctrl+alt+i",
+      linux: "ctrl+alt+i",
+    },
+  },
+  {
     id: "audio_recording",
     name: "Voice Input",
     description: "Start voice recording",

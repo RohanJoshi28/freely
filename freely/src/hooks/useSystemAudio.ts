@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useApp } from "@/contexts";
 import { fetchSTT, fetchAIResponse } from "@/lib/functions";
 import {
+  AssistantModeOption,
   DEFAULT_QUICK_ACTIONS,
   DEFAULT_SYSTEM_PROMPT,
   STORAGE_KEYS,
@@ -104,6 +105,8 @@ export function useSystemAudio() {
     allAiProviders,
     systemPrompt,
     selectedAudioDevices,
+    assistantMode,
+    setAssistantMode,
   } = useApp();
   const abortControllerRef = useRef<AbortController | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -708,6 +711,28 @@ export function useSystemAudio() {
       }
     });
   }, [startCapture, stopCapture]);
+
+  // Mode shortcuts: one press picks the mode and starts listening, pressing
+  // the active mode's shortcut again stops listening and turns the mode off
+  useEffect(() => {
+    const modeShortcuts: Record<string, AssistantModeOption["id"]> = {
+      coffee_chat_mode: "coffee-chat",
+      interview_mode: "interview",
+    };
+    Object.entries(modeShortcuts).forEach(([actionId, mode]) => {
+      globalShortcuts.registerCustomShortcutCallback(actionId, async () => {
+        if (capturing && assistantMode === mode) {
+          setAssistantMode("none");
+          await stopCapture();
+          return;
+        }
+        setAssistantMode(mode);
+        if (!capturing) {
+          await startCapture();
+        }
+      });
+    });
+  }, [capturing, assistantMode, setAssistantMode, startCapture, stopCapture]);
 
   useEffect(() => {
     return () => {

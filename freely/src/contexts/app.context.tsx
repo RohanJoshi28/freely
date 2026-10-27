@@ -31,6 +31,7 @@ import { enable, disable } from "@tauri-apps/plugin-autostart";
 import {
   ReactNode,
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -83,10 +84,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [assistantMode, setAssistantModeState] =
     useState<AssistantMode>(getAssistantMode);
 
-  const setAssistantMode = (mode: AssistantMode) => {
+  const setAssistantMode = useCallback((mode: AssistantMode) => {
     setAssistantModeState(mode);
     setAssistantModeStorage(mode);
-  };
+  }, []);
 
   const [selectedAudioDevices, setSelectedAudioDevices] = useState<{
     input: { id: string; name: string };
