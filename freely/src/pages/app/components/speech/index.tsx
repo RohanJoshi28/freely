@@ -25,7 +25,7 @@ import { QuickActions } from "./QuickActions";
 import { Warning } from "./Warning";
 import { MicListener } from "./MicListener";
 import { LiveTranscript } from "./LiveTranscript";
-import { DeepDivePanel } from "./DeepDivePanel";
+import { MoreInfoPanel } from "./MoreInfoPanel";
 import { CopilotHotkeys, HelperCard, WrapUpPanel } from "./CopilotPanels";
 import { getMicEnabled } from "@/lib/storage";
 import { useSystemAudioType } from "@/hooks";
@@ -78,8 +78,8 @@ export const SystemAudio = (props: useSystemAudioType) => {
     dismissWrapUp,
     thinkingLevel,
     responseLabel,
-    deepDives,
-    clearDeepDives,
+    moreInfo,
+    clearMoreInfo,
   } = props;
 
   const { hasActiveLicense, supportsImages } = useApp();
@@ -426,9 +426,9 @@ export const SystemAudio = (props: useSystemAudioType) => {
                   </div>
                 </ScrollArea>
 
-                {/* Second panel: Ctrl+M deep dives */}
-                {deepDives.length > 0 && (
-                  <DeepDivePanel entries={deepDives} onClear={clearDeepDives} />
+                {/* Second panel: Ctrl+M more info */}
+                {moreInfo.length > 0 && (
+                  <MoreInfoPanel entries={moreInfo} onClear={clearMoreInfo} />
                 )}
               </div>
 

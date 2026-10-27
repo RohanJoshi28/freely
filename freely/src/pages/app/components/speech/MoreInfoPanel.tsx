@@ -1,19 +1,19 @@
 import { useEffect, useRef } from "react";
 import { Loader2, TelescopeIcon, Trash2Icon } from "lucide-react";
 import { Button, CopyButton, Markdown } from "@/components";
-import { DeepDiveEntry } from "@/hooks/useSystemAudio";
+import { MoreInfoEntry } from "@/hooks/useSystemAudio";
 
 type Props = {
-  entries: DeepDiveEntry[];
+  entries: MoreInfoEntry[];
   onClear: () => void;
 };
 
-/** Ctrl+M deep dives: a second chat next to the live answers, newest last */
-export const DeepDivePanel = ({ entries, onClear }: Props) => {
+/** Ctrl+M results: a second chat next to the live answers, newest last */
+export const MoreInfoPanel = ({ entries, onClear }: Props) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastEntry = entries[entries.length - 1];
 
-  // Follow the newest deep dive while it streams in
+  // Follow the newest entry while it streams in
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -24,13 +24,13 @@ export const DeepDivePanel = ({ entries, onClear }: Props) => {
       <div className="flex items-center justify-between px-3 py-2 border-b border-border/50">
         <div className="flex items-center gap-1.5">
           <TelescopeIcon className="w-3.5 h-3.5 text-primary" />
-          <h4 className="text-xs font-medium">Deep dive</h4>
+          <h4 className="text-xs font-medium">More info</h4>
         </div>
         <Button
           size="icon"
           variant="ghost"
           className="h-5 w-5"
-          title="Clear deep dives"
+          title="Clear"
           onClick={onClear}
         >
           <Trash2Icon className="h-3 w-3" />
@@ -57,7 +57,7 @@ export const DeepDivePanel = ({ entries, onClear }: Props) => {
               <div className="flex items-center gap-2 py-1">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                 <span className="text-[11px] text-muted-foreground">
-                  Searching and digging deeper…
+                  Searching…
                 </span>
               </div>
             ) : (

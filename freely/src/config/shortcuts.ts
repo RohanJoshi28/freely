@@ -117,10 +117,10 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
     },
   },
   {
-    id: "deep_dive",
-    name: "Deep Dive",
+    id: "more_info",
+    name: "More Info",
     description:
-      "While listening: search and pull up much more on the current topic, in a second panel",
+      "While listening: search for more information on the current topic, shown in a second panel",
     defaultKey: {
       macos: "ctrl+m",
       windows: "ctrl+alt+m",

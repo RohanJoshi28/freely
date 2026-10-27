@@ -17,7 +17,7 @@ import {
   AssistantMode,
   AssistantModeOption,
   COPILOT_ACTIONS,
-  DEEP_DIVE_INSTRUCTION,
+  MORE_INFO_INSTRUCTION,
   ON_DEMAND_INSTRUCTION,
   GENERATION_PROFILES,
   GenerationProfileId,
@@ -123,8 +123,8 @@ export interface WrapUpState {
   error?: string;
 }
 
-/** One Ctrl+M deep dive, shown in the second panel */
-export interface DeepDiveEntry {
+/** One Ctrl+M result, shown in the second panel */
+export interface MoreInfoEntry {
   id: string;
   text: string;
   loading: boolean;
@@ -197,10 +197,10 @@ export function useSystemAudio() {
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [liveTranscriptionReady, setLiveTranscriptionReady] = useState(false);
   const [helper, setHelper] = useState<CopilotHelperState | null>(null);
-  const [deepDives, setDeepDives] = useState<DeepDiveEntry[]>([]);
-  const deepDivesRef = useRef(deepDives);
-  deepDivesRef.current = deepDives;
-  const deepDiveAbortRef = useRef<AbortController | null>(null);
+  const [moreInfo, setMoreInfo] = useState<MoreInfoEntry[]>([]);
+  const moreInfoRef = useRef(moreInfo);
+  moreInfoRef.current = moreInfo;
+  const moreInfoAbortRef = useRef<AbortController | null>(null);
   const [wrapUp, setWrapUp] = useState<WrapUpState | null>(null);
   const [thinkingLevel, setThinkingLevel] =
     useState<ThinkingLevel>(getThinkingLevel);
@@ -935,11 +935,11 @@ export function useSystemAudio() {
     }
   };
   /**
-   * Ctrl+M: search and go deeper on the current topic. Streams into its own
+   * Ctrl+M: search for more information on the current topic. Streams into its own
    * panel, one entry per press, and never touches the main answer.
    */
-  const runDeepDive = async () => {
-    if (deepDivesRef.current.some((entry) => entry.loading)) return;
+  const runMoreInfo = async () => {
+    if (moreInfoRef.current.some((entry) => entry.loading)) return;
     const hasContext =
       conversationRef.current.messages.length > 0 ||
       transcriptRef.current.length > 0;
@@ -956,32 +956,31 @@ export function useSystemAudio() {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
 
-    const profile = GENERATION_PROFILES.search;
+    const profile = GENERATION_PROFILES.more;
     const effort = getThinkingLevel();
-    const id = `deep-${Date.now()}`;
-    const update = (patch: Partial<DeepDiveEntry>) =>
-      setDeepDives((prev) =>
+    const id = `more-${Date.now()}`;
+    const update = (patch: Partial<MoreInfoEntry>) =>
+      setMoreInfo((prev) =>
         prev.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
       );
-    const earlier = deepDivesRef.current
+    const earlier = moreInfoRef.current
       .filter((entry) => entry.text)
       .slice(-3)
       .map((entry) => entry.text);
     const latestAnswer = lastAIResponseRef.current;
     const message = [
-      DEEP_DIVE_INSTRUCTION,
-      latestAnswer &&
-        `The copilot's latest response (go beyond it, don't repeat it):\n${latestAnswer}`,
+      MORE_INFO_INSTRUCTION,
+      latestAnswer && `The copilot's latest response:\n${latestAnswer}`,
       earlier.length &&
-        `Earlier deep dives (don't repeat them; go further or cover what's new):\n${earlier.join("\n\n---\n\n")}`,
+        `Earlier additional information:\n${earlier.join("\n\n---\n\n")}`,
     ]
       .filter(Boolean)
       .join("\n\n");
 
-    deepDiveAbortRef.current?.abort();
+    moreInfoAbortRef.current?.abort();
     const controller = new AbortController();
-    deepDiveAbortRef.current = controller;
-    setDeepDives((prev) => [
+    moreInfoAbortRef.current = controller;
+    setMoreInfo((prev) => [
       ...prev,
       {
         id,
@@ -1016,16 +1015,16 @@ export function useSystemAudio() {
       if (controller.signal.aborted) return;
       update({
         loading: false,
-        error: err?.message || "Deep dive failed",
+        error: err?.message || "Could not get more information",
       });
     }
   };
-  const runDeepDiveRef = useRef(runDeepDive);
-  runDeepDiveRef.current = runDeepDive;
+  const runMoreInfoRef = useRef(runMoreInfo);
+  runMoreInfoRef.current = runMoreInfo;
 
-  const clearDeepDives = useCallback(() => {
-    deepDiveAbortRef.current?.abort();
-    setDeepDives([]);
+  const clearMoreInfo = useCallback(() => {
+    moreInfoAbortRef.current?.abort();
+    setMoreInfo([]);
   }, []);
 
   const runCopilotActionRef = useRef(runCopilotAction);
@@ -1171,7 +1170,7 @@ export function useSystemAudio() {
         updatedAt: 0,
       });
       setTranscript([]);
-      clearDeepDives();
+      clearMoreInfo();
       resetTurnState();
       helperAbortRef.current?.abort();
       setHelper(null);
@@ -1384,10 +1383,10 @@ export function useSystemAudio() {
     });
   }, []);
 
-  // Ctrl+M: deep dive in the second panel
+  // Ctrl+M: more information in the second panel
   useEffect(() => {
-    globalShortcuts.registerCustomShortcutCallback("deep_dive", () => {
-      runDeepDiveRef.current();
+    globalShortcuts.registerCustomShortcutCallback("more_info", () => {
+      runMoreInfoRef.current();
     });
   }, []);
 
@@ -1484,7 +1483,7 @@ export function useSystemAudio() {
       }
       helperAbortRef.current?.abort();
       wrapUpAbortRef.current?.abort();
-      deepDiveAbortRef.current?.abort();
+      moreInfoAbortRef.current?.abort();
       invoke("stop_system_audio_capture").catch(() => {});
     };
   }, []);
@@ -1581,8 +1580,8 @@ export function useSystemAudio() {
       updatedAt: 0,
     });
     setTranscript([]);
-    deepDiveAbortRef.current?.abort();
-    setDeepDives([]);
+    moreInfoAbortRef.current?.abort();
+    setMoreInfo([]);
     resetTurnState();
     setHelper(null);
     setWrapUp(null);
@@ -1751,7 +1750,7 @@ export function useSystemAudio() {
     runCopilotAction,
     wrapUp,
     dismissWrapUp,
-    deepDives,
-    clearDeepDives,
+    moreInfo,
+    clearMoreInfo,
   };
 }

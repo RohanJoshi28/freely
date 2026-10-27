@@ -443,7 +443,10 @@ pub async fn run_claude(
         .arg(&effective_prompt)
         .arg("--output-format")
         .arg("stream-json")
-        .arg("--verbose");
+        .arg("--verbose")
+        // Skip the user's MCP servers and claude.ai connectors (Gmail, Docs…):
+        // Freely never uses them, and loading them slows every call
+        .arg("--strict-mcp-config");
 
     // Resume an existing Claude session for conversation continuity.
     // The CLI maintains full conversation state — no history prepending needed.
