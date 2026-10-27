@@ -51,6 +51,7 @@ pub async fn start_system_audio_capture(
     device_id: Option<String>,
 ) -> Result<(), String> {
     let state = app.state::<crate::AudioState>();
+    FORCE_FLUSH.store(false, Ordering::SeqCst);
 
     // Check if already capturing (atomic check)
     {
@@ -133,6 +134,17 @@ pub async fn start_system_audio_capture(
     Ok(())
 }
 
+/// Set by `force_flush_speech`; the VAD loop then emits whatever speech it has
+/// buffered without waiting for silence.
+static FORCE_FLUSH: AtomicBool = AtomicBool::new(false);
+
+/// Emit the speech captured so far immediately. If nothing is buffered, emits
+/// `speech-flush-empty` so the frontend can respond from the conversation so far.
+#[tauri::command]
+pub fn force_flush_speech() {
+    FORCE_FLUSH.store(true, Ordering::SeqCst);
+}
+
 // VAD-enabled capture - OPTIMIZED for real-time speech detection
 async fn run_vad_capture(
     app: AppHandle,
@@ -167,6 +179,28 @@ async fn run_vad_capture(
 
             let (rms, peak) = calculate_audio_metrics(&mono);
             let is_speech = rms > config.sensitivity_rms || peak > config.peak_threshold;
+
+            if FORCE_FLUSH.swap(false, Ordering::SeqCst) {
+                if in_speech && !speech_buffer.is_empty() {
+                    speech_buffer.extend_from_slice(&mono);
+                    let normalized_buffer = normalize_audio_level(&speech_buffer, 0.1);
+                    match samples_to_wav_b64(sr, &normalized_buffer) {
+                        Ok(b64) => {
+                            if let Err(e) = app.emit("speech-detected", b64) {
+                                warn!("Failed to emit speech-detected: {}", e);
+                            }
+                        }
+                        Err(_) => error!("Failed to encode flushed speech to WAV"),
+                    }
+                    speech_buffer.clear();
+                    in_speech = false;
+                    silence_chunks = 0;
+                    speech_chunks = 0;
+                } else if let Err(e) = app.emit("speech-flush-empty", ()) {
+                    warn!("Failed to emit speech-flush-empty: {}", e);
+                }
+                continue;
+            }
 
             if is_speech {
                 if !in_speech {

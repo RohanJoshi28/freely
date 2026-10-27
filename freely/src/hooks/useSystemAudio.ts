@@ -65,6 +65,9 @@ export interface ChatConversation {
 
 export type useSystemAudioType = ReturnType<typeof useSystemAudio>;
 
+const GENERATE_NOW_MESSAGE =
+  "(No new audio. The user asked for a response right now: respond to the most recent question or topic in the conversation so far.)";
+
 export function useSystemAudio() {
   const { resizeWindow } = useWindowResize();
   const globalShortcuts = useGlobalShortcuts();
@@ -658,6 +661,40 @@ export function useSystemAudio() {
       console.error("Manual stop error:", err);
     }
   }, [isContinuousMode]);
+
+  // Generate now: send buffered speech without waiting for a pause, or, if
+  // nothing new was said, respond from the conversation so far
+  const quickActionRef = useRef(handleQuickActionClick);
+  quickActionRef.current = handleQuickActionClick;
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("speech-flush-empty", () => {
+      quickActionRef.current(GENERATE_NOW_MESSAGE);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
+    globalShortcuts.registerCustomShortcutCallback("generate_now", async () => {
+      if (!capturing || isAIProcessing) return;
+      if (!isContinuousMode) {
+        await invoke("force_flush_speech");
+      } else if (isRecordingInContinuousMode) {
+        await manualStopAndSend();
+      } else {
+        await quickActionRef.current(GENERATE_NOW_MESSAGE);
+      }
+    });
+  }, [
+    capturing,
+    isAIProcessing,
+    isContinuousMode,
+    isRecordingInContinuousMode,
+    manualStopAndSend,
+  ]);
 
   const handleSetup = useCallback(async () => {
     try {

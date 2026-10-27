@@ -108,6 +108,7 @@ pub fn run() {
             speaker::start_system_audio_capture,
             speaker::stop_system_audio_capture,
             speaker::manual_stop_continuous,
+            speaker::force_flush_speech,
             speaker::check_system_audio_access,
             speaker::request_system_audio_access,
             speaker::get_vad_config,

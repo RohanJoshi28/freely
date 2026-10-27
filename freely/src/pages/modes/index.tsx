@@ -45,7 +45,7 @@ const Modes = () => {
   return (
     <PageLayout
       title="Coffee Chat & Interview"
-      description="Press Ctrl+K for a coffee chat or Ctrl+I for an interview: it switches modes and starts listening in one go. Press the same keys again to stop. It responds on its own and never asks you for anything mid-conversation. Rebind the keys under Cursor & Shortcuts."
+      description="Press Ctrl+K for a coffee chat or Ctrl+I for an interview: it switches modes and starts listening in one go. Press Ctrl+G to get a response right away instead of waiting for a pause. Press the same mode keys again to stop. It responds on its own and never asks you for anything mid-conversation. Rebind the keys under Cursor & Shortcuts."
     >
       {ASSISTANT_MODES.map((mode) => (
         <ModeNotes key={mode.id} mode={mode} />

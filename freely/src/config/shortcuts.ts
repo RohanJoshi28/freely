@@ -74,6 +74,17 @@ export const DEFAULT_SHORTCUT_ACTIONS: ShortcutAction[] = [
     },
   },
   {
+    id: "generate_now",
+    name: "Generate Now",
+    description:
+      "While listening, respond immediately instead of waiting for a pause",
+    defaultKey: {
+      macos: "ctrl+g",
+      windows: "ctrl+alt+g",
+      linux: "ctrl+alt+g",
+    },
+  },
+  {
     id: "audio_recording",
     name: "Voice Input",
     description: "Start voice recording",
