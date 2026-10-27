@@ -122,6 +122,8 @@ pub fn run() {
             agents::open_terminal_for_login,
             agents::load_env_file,
             agents::run_claude,
+            agents::prewarm_claude,
+            agents::clear_claude_pool,
             agents::run_codex,
             agents::run_gemini,
             agents::kill_agent_process,

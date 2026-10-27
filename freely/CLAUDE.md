@@ -674,6 +674,30 @@ passes `--strict-mcp-config`: 0 MCP tools, ~1 s faster to first text in one
 measurement. `--bare` was rejected: it only accepts `ANTHROPIC_API_KEY`, not
 the OAuth login.
 
+### 11.14 Pre-started Claude processes
+
+Rohan: "why does starting claude take a few seconds? terminal with claude
+should already be running the moment freely is open."
+
+- Measured: spawning `claude -p` per answer costs ~3.3 s before the request
+  is sent (first text 4.5 s cold vs 1.2 s pre-started; done 6.3 s vs 3.2 s).
+- `agents.rs`: `claude_command` builds the CLI call; without a prompt it
+  starts `claude -p --input-format stream-json` and waits for one message on
+  stdin. `WARM_POOL` (keyed by `ClaudeLaunch` = model/effort/tools/allowed
+  tools) holds waiting processes (`kill_on_drop`, recycled after 10 min).
+  `run_claude` takes a matching one (or starts one), sends the prompt as a
+  single stream-json message, closes stdin, streams output via `run_child`,
+  and refills the pool in the background. Resumed sessions, custom working
+  directories and permission modes still run one-off.
+- Commands: `prewarm_claude(launches)` keeps exactly those settings warm;
+  `clear_claude_pool()` stops them. Frontend
+  (`claude-pool.function.ts`, `useSystemAudio.prewarmRef`): warm Sonnet at
+  capture start, re-warm on Ctrl+T, clear on stop. Haiku/search/more warm
+  after their first use. Claude Code provider only.
+- ~200 MB RAM per waiting process; that's why only Sonnet is warmed upfront.
+- `claudeLaunchFor` must resolve the model like `fetchAIResponse` does, or
+  the warm process won't match the call.
+
 ### 11.7 Not verified by ear
 
 Same caveat as §8: nobody could play audio here. The judge was verified

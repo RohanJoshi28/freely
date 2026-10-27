@@ -10,13 +10,16 @@
 //! 4. Returns a collected Vec<StreamEvent> when the process exits
 
 use crate::claude_config;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, Command};
 use tracing::warn;
 
 // ============================================================================
@@ -407,15 +410,49 @@ pub async fn load_env_file() -> Result<HashMap<String, String>, String> {
 // Run Claude CLI
 // ============================================================================
 
-#[tauri::command]
-pub async fn run_claude(
-    app: AppHandle,
-    payload: AgentPayload,
-    registry: tauri::State<'_, AgentProcessRegistry>,
-) -> Result<Vec<StreamEvent>, String> {
-    // Ensure the .claude config directory exists with default files on first run.
-    let claude_dir = claude_config::init_claude_config(&app)?;
+/// Launch settings that decide which pre-started `claude` process can serve
+/// a call: processes are interchangeable only when these match.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct ClaudeLaunch {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub tools: Option<String>,
+    #[serde(rename = "allowedTools")]
+    pub allowed_tools: Option<Vec<String>>,
+}
 
+impl ClaudeLaunch {
+    fn from_payload(payload: &AgentPayload) -> Self {
+        Self {
+            model: payload.model.clone(),
+            effort: payload.effort.clone(),
+            tools: payload.tools.clone(),
+            allowed_tools: payload.allowed_tools.clone(),
+        }
+    }
+
+    fn key(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match self.effort.as_deref() {
+            None | Some("low" | "medium" | "high" | "xhigh" | "max") => Ok(()),
+            Some(other) => Err(format!("Invalid effort level: {}", other)),
+        }
+    }
+}
+
+/// `claude -p` with Freely's flags. With a prompt it runs once; without one it
+/// starts and waits for a single stream-json message on stdin.
+async fn claude_command(
+    app: &AppHandle,
+    launch: &ClaudeLaunch,
+    prompt: Option<&str>,
+    working_directory: Option<&str>,
+) -> Result<Command, String> {
+    // Ensure the .claude config directory exists with default files on first run.
+    let claude_dir = claude_config::init_claude_config(app)?;
     let binary = resolve_binary("claude").await?;
 
     let mut cmd = Command::new(&binary);
@@ -426,11 +463,160 @@ pub async fn run_claude(
 
     // Set working directory: use the user's project directory when provided,
     // otherwise fall back to the .claude config dir so the CLI picks up CLAUDE.md.
-    if let Some(ref working_dir) = payload.working_directory {
-        cmd.current_dir(working_dir);
-    } else {
-        cmd.current_dir(&claude_dir);
+    match working_directory {
+        Some(dir) => cmd.current_dir(dir),
+        None => cmd.current_dir(&claude_dir),
+    };
+
+    // The prompt must directly follow -p: --allowedTools below is variadic
+    cmd.arg("-p");
+    match prompt {
+        Some(prompt) => cmd.arg(prompt),
+        None => cmd.arg("--input-format").arg("stream-json"),
+    };
+    cmd.arg("--output-format")
+        .arg("stream-json")
+        .arg("--verbose")
+        // Skip the user's MCP servers and claude.ai connectors (Gmail, Docs…):
+        // Freely never uses them, and loading them slows every call
+        .arg("--strict-mcp-config");
+
+    if let Some(ref model) = launch.model {
+        cmd.arg("--model").arg(model);
     }
+    if let Some(ref effort) = launch.effort {
+        cmd.arg("--effort").arg(effort);
+    }
+    if let Some(ref tools) = launch.tools {
+        cmd.arg("--tools").arg(tools);
+    }
+    if let Some(ref allowed) = launch.allowed_tools {
+        if !allowed.is_empty() {
+            cmd.arg("--allowedTools").args(allowed);
+        }
+    }
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    Ok(cmd)
+}
+
+// ============================================================================
+// Pre-started Claude processes
+//
+// Starting `claude` (Node boot, settings, auth, tool setup) takes ~3 s before
+// the request is even sent. While Freely is listening, processes are started
+// ahead of time and wait for their prompt on stdin, which cut time to first
+// text from ~4.5 s to ~1.2 s in testing.
+// ============================================================================
+
+struct WarmClaude {
+    child: Child,
+    started: Instant,
+}
+
+static WARM_POOL: Lazy<tokio::sync::Mutex<HashMap<String, WarmClaude>>> =
+    Lazy::new(|| tokio::sync::Mutex::new(HashMap::new()));
+/// Refill the pool after use only while the frontend wants it warm
+static POOL_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Don't hand out processes that have idled this long (stale auth, settings)
+const WARM_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+
+async fn spawn_waiting(app: &AppHandle, launch: &ClaudeLaunch) -> Result<Child, String> {
+    let mut cmd = claude_command(app, launch, None, None).await?;
+    cmd.stdin(Stdio::piped()).kill_on_drop(true);
+    cmd.spawn()
+        .map_err(|e| format!("Failed to spawn process: {}", e))
+}
+
+/// A ready process for these settings: a warm one if available, else a new one
+async fn take_waiting(app: &AppHandle, launch: &ClaudeLaunch) -> Result<Child, String> {
+    let warm = WARM_POOL.lock().await.remove(&launch.key());
+    if let Some(mut warm) = warm {
+        let alive = matches!(warm.child.try_wait(), Ok(None));
+        if alive && warm.started.elapsed() < WARM_MAX_AGE {
+            return Ok(warm.child);
+        }
+        // Dropping it kills it (kill_on_drop)
+    }
+    spawn_waiting(app, launch).await
+}
+
+async fn refill(app: AppHandle, launch: ClaudeLaunch) {
+    if !POOL_ACTIVE.load(Ordering::Acquire) {
+        return;
+    }
+    let key = launch.key();
+    let mut pool = WARM_POOL.lock().await;
+    if pool.contains_key(&key) {
+        return;
+    }
+    match spawn_waiting(&app, &launch).await {
+        Ok(child) => {
+            pool.insert(
+                key,
+                WarmClaude {
+                    child,
+                    started: Instant::now(),
+                },
+            );
+        }
+        Err(e) => warn!("Failed to pre-start claude: {}", e),
+    }
+}
+
+/// Send the prompt as the single stream-json message and close stdin
+async fn send_prompt(child: &mut Child, prompt: &str) -> Result<(), String> {
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Process has no stdin".to_string())?;
+    let message = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": prompt },
+    });
+    let line = format!("{}\n", message);
+    stdin
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to send prompt: {}", e))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to send prompt: {}", e))?;
+    Ok(())
+}
+
+/// Keep exactly these settings warm (others are stopped). Called when
+/// listening starts and when the thinking level changes.
+#[tauri::command]
+pub async fn prewarm_claude(app: AppHandle, launches: Vec<ClaudeLaunch>) -> Result<(), String> {
+    for launch in &launches {
+        launch.validate()?;
+    }
+    POOL_ACTIVE.store(true, Ordering::Release);
+    let keep: Vec<String> = launches.iter().map(|l| l.key()).collect();
+    WARM_POOL.lock().await.retain(|key, _| keep.contains(key));
+    for launch in launches {
+        refill(app.clone(), launch).await;
+    }
+    Ok(())
+}
+
+/// Stop all pre-started processes (listening stopped)
+#[tauri::command]
+pub async fn clear_claude_pool() {
+    POOL_ACTIVE.store(false, Ordering::Release);
+    WARM_POOL.lock().await.clear();
+}
+
+#[tauri::command]
+pub async fn run_claude(
+    app: AppHandle,
+    payload: AgentPayload,
+    registry: tauri::State<'_, AgentProcessRegistry>,
+) -> Result<Vec<StreamEvent>, String> {
+    let launch = ClaudeLaunch::from_payload(&payload);
+    launch.validate()?;
 
     // Build the effective prompt, prepending any system_prompt from the frontend.
     let effective_prompt = match &payload.system_prompt {
@@ -438,52 +624,39 @@ pub async fn run_claude(
         None => payload.prompt.clone(),
     };
 
-    // Claude CLI: `claude -p "prompt"` for non-interactive
-    cmd.arg("-p")
-        .arg(&effective_prompt)
-        .arg("--output-format")
-        .arg("stream-json")
-        .arg("--verbose")
-        // Skip the user's MCP servers and claude.ai connectors (Gmail, Docs…):
-        // Freely never uses them, and loading them slows every call
-        .arg("--strict-mcp-config");
-
-    // Resume an existing Claude session for conversation continuity.
-    // The CLI maintains full conversation state — no history prepending needed.
-    if let Some(ref agent_sid) = payload.agent_session_id {
-        cmd.arg("--resume").arg(agent_sid);
-    }
-
-    if let Some(ref model) = payload.model {
-        cmd.arg("--model").arg(model);
-    }
-
-    if let Some(ref perm) = payload.permission_mode {
-        cmd.arg("--allowedTools").arg(perm);
-    }
-
-    if let Some(ref effort) = payload.effort {
-        if !["low", "medium", "high", "xhigh", "max"].contains(&effort.as_str()) {
-            return Err(format!("Invalid effort level: {}", effort));
+    // Resumed sessions, custom working directories and permission modes run
+    // as one-off processes; everything else can use a pre-started one.
+    let one_off = payload.agent_session_id.is_some()
+        || payload.working_directory.is_some()
+        || payload.permission_mode.is_some();
+    if one_off {
+        let mut cmd = claude_command(
+            &app,
+            &launch,
+            Some(&effective_prompt),
+            payload.working_directory.as_deref(),
+        )
+        .await?;
+        // Resume an existing Claude session for conversation continuity.
+        if let Some(ref agent_sid) = payload.agent_session_id {
+            cmd.arg("--resume").arg(agent_sid);
         }
-        cmd.arg("--effort").arg(effort);
-    }
-
-    if let Some(ref tools) = payload.tools {
-        cmd.arg("--tools").arg(tools);
-    }
-
-    if let Some(ref allowed) = payload.allowed_tools {
-        if !allowed.is_empty() {
-            cmd.arg("--allowedTools").args(allowed);
+        if let Some(ref perm) = payload.permission_mode {
+            cmd.arg("--allowedTools").arg(perm);
         }
+        cmd.stdin(Stdio::null());
+        return run_cli_process(app, cmd, &payload.session_id, &registry).await;
     }
 
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
-
-    run_cli_process(app, cmd, &payload.session_id, &registry).await
+    let mut child = take_waiting(&app, &launch).await?;
+    if let Err(e) = send_prompt(&mut child, &effective_prompt).await {
+        // The waiting process died; start a fresh one
+        warn!("Pre-started claude unusable ({}); starting a new one", e);
+        child = spawn_waiting(&app, &launch).await?;
+        send_prompt(&mut child, &effective_prompt).await?;
+    }
+    tokio::spawn(refill(app.clone(), launch));
+    run_child(app, child, &payload.session_id, &registry).await
 }
 
 // ============================================================================
@@ -579,8 +752,19 @@ async fn run_cli_process(
     session_id: &str,
     registry: &AgentProcessRegistry,
 ) -> Result<Vec<StreamEvent>, String> {
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn process: {}", e))?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn process: {}", e))?;
+    run_child(app, child, session_id, registry).await
+}
 
+/// Stream a running CLI process's output to the frontend until it exits
+async fn run_child(
+    app: AppHandle,
+    mut child: Child,
+    session_id: &str,
+    registry: &AgentProcessRegistry,
+) -> Result<Vec<StreamEvent>, String> {
     // Register PID so the frontend can cancel via kill_agent_process
     if let Some(pid) = child.id() {
         if let Ok(mut map) = registry.0.lock() {

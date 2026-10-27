@@ -12,6 +12,9 @@ import {
   isLocalWhisperReady,
   transcribeLocally,
   cleanLocalTranscript,
+  claudeLaunchFor,
+  prewarmClaude,
+  clearClaudePool,
 } from "@/lib/functions";
 import {
   AssistantMode,
@@ -262,6 +265,23 @@ export function useSystemAudio() {
   assistantModeRef.current = assistantMode;
   const sttRef = useRef({ selectedSttProvider, allSttProviders });
   sttRef.current = { selectedSttProvider, allSttProviders };
+
+  /**
+   * Claude Code: keep a Sonnet process started and waiting while listening
+   * (automatic answers, Ctrl+G, helpers). Other profiles warm up after their
+   * first use. Saves ~3 s of CLI startup per answer.
+   */
+  const prewarmRef = useRef(() => {});
+  prewarmRef.current = () => {
+    if (selectedAIProvider.provider !== "claude-code") return;
+    prewarmClaude([
+      claudeLaunchFor(
+        GENERATION_PROFILES.sonnet,
+        getThinkingLevel(),
+        selectedAIProvider.variables,
+      ),
+    ]);
+  };
 
   const getEffectiveSystemPrompt = () =>
     useSystemPrompt
@@ -1177,6 +1197,8 @@ export function useSystemAudio() {
       wrapUpAbortRef.current?.abort();
       setWrapUp(null);
 
+      prewarmRef.current();
+
       // Live captions: load the local model in the background
       setLiveTranscriptionReady(false);
       prepareLiveTranscription(
@@ -1236,6 +1258,7 @@ export function useSystemAudio() {
         // Stop the audio capture
         await invoke<string>("stop_system_audio_capture");
         setLiveTranscription(false).catch(() => {});
+        clearClaudePool();
 
         // A fragment still waiting for more speech is part of the record
         let messages = conversationRef.current.messages;
@@ -1380,6 +1403,8 @@ export function useSystemAudio() {
         getThinkingLevel() === "high" ? "low" : "high";
       storeThinkingLevel(next);
       setThinkingLevel(next);
+      // Warm processes were started with the old effort
+      if (capturingRef.current) prewarmRef.current();
     });
   }, []);
 
