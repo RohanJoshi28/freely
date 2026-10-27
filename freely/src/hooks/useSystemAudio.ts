@@ -1174,76 +1174,92 @@ export function useSystemAudio() {
     liveSegmentRef.current = null;
   };
 
-  const startCapture = useCallback(async () => {
-    try {
-      setError("");
+  /**
+   * Start listening. `autoDetect` (used by the mode shortcuts) forces
+   * automatic speech detection: in Manual mode nothing is processed until
+   * the user presses Enter in the panel, which defeats hands-free use.
+   */
+  const startCapture = useCallback(
+    async (options?: { autoDetect?: boolean }) => {
+      const config =
+        options?.autoDetect === true && !vadConfig.enabled
+          ? { ...vadConfig, enabled: true }
+          : vadConfig;
+      if (config !== vadConfig) {
+        setVadConfig(config);
+        safeLocalStorage.setItem("vad_config", JSON.stringify(config));
+      }
+      try {
+        setError("");
 
-      const hasAccess = await invoke<boolean>("check_system_audio_access");
-      if (!hasAccess) {
-        setSetupRequired(true);
+        const hasAccess = await invoke<boolean>("check_system_audio_access");
+        if (!hasAccess) {
+          setSetupRequired(true);
+          setIsPopoverOpen(true);
+          return;
+        }
+
+        const isContinuous = !config.enabled;
+
+        // Set up conversation
+        const conversationId = generateConversationId("sysaudio");
+        setConversation({
+          id: conversationId,
+          title: "",
+          messages: [],
+          createdAt: 0,
+          updatedAt: 0,
+        });
+        setTranscript([]);
+        clearMoreInfo();
+        resetTurnState();
+        helperAbortRef.current?.abort();
+        setHelper(null);
+        wrapUpAbortRef.current?.abort();
+        setWrapUp(null);
+
+        prewarmRef.current();
+
+        // Live captions: load the local model in the background
+        setLiveTranscriptionReady(false);
+        prepareLiveTranscription(
+          getLiveTranscriptionModel(),
+          getLiveTranscriptionEnabled(),
+        ).then(setLiveTranscriptionReady);
+
+        setCapturing(true);
         setIsPopoverOpen(true);
-        return;
+        setIsContinuousMode(isContinuous);
+        setRecordingProgress(0);
+
+        // If continuous mode
+        if (isContinuous) {
+          setIsRecordingInContinuousMode(false);
+          return;
+        }
+
+        // VAD mode: Start recording immediately
+        // Stop any existing capture
+        await invoke<string>("stop_system_audio_capture");
+
+        const deviceId =
+          selectedAudioDevices.output.id !== "default"
+            ? selectedAudioDevices.output.id
+            : null;
+
+        // Start capture with VAD config
+        await invoke<string>("start_system_audio_capture", {
+          vadConfig: config,
+          deviceId: deviceId,
+        });
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError(errorMessage);
+        setIsPopoverOpen(true);
       }
-
-      const isContinuous = !vadConfig.enabled;
-
-      // Set up conversation
-      const conversationId = generateConversationId("sysaudio");
-      setConversation({
-        id: conversationId,
-        title: "",
-        messages: [],
-        createdAt: 0,
-        updatedAt: 0,
-      });
-      setTranscript([]);
-      clearMoreInfo();
-      resetTurnState();
-      helperAbortRef.current?.abort();
-      setHelper(null);
-      wrapUpAbortRef.current?.abort();
-      setWrapUp(null);
-
-      prewarmRef.current();
-
-      // Live captions: load the local model in the background
-      setLiveTranscriptionReady(false);
-      prepareLiveTranscription(
-        getLiveTranscriptionModel(),
-        getLiveTranscriptionEnabled(),
-      ).then(setLiveTranscriptionReady);
-
-      setCapturing(true);
-      setIsPopoverOpen(true);
-      setIsContinuousMode(isContinuous);
-      setRecordingProgress(0);
-
-      // If continuous mode
-      if (isContinuous) {
-        setIsRecordingInContinuousMode(false);
-        return;
-      }
-
-      // VAD mode: Start recording immediately
-      // Stop any existing capture
-      await invoke<string>("stop_system_audio_capture");
-
-      const deviceId =
-        selectedAudioDevices.output.id !== "default"
-          ? selectedAudioDevices.output.id
-          : null;
-
-      // Start capture with VAD config
-      await invoke<string>("start_system_audio_capture", {
-        vadConfig: vadConfig,
-        deviceId: deviceId,
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(errorMessage);
-      setIsPopoverOpen(true);
-    }
-  }, [vadConfig, selectedAudioDevices.output.id]);
+    },
+    [vadConfig, selectedAudioDevices.output.id],
+  );
 
   /**
    * Stop listening. When a mode was active (passed in by the mode shortcut,
@@ -1502,7 +1518,7 @@ export function useSystemAudio() {
         }
         setAssistantMode(mode);
         if (!capturing) {
-          await startCapture();
+          await startCapture({ autoDetect: true });
         }
       });
     });

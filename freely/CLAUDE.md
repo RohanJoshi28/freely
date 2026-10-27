@@ -738,6 +738,17 @@ information instead of performing the web search like it should".
   instructions now ask for WebSearch's extended mode for time-sensitive
   topics; 2/2 test runs then returned current facts (16–17 s).
 
+### 11.17 "System audio not detected" = Manual mode
+
+Rohan played a YouTube video and nothing was transcribed. Permission was fine
+(TCC `kTCCServiceAudioCapture` allowed for `com.freely.app`; note a denied
+tap returns silence, not an error, and `check_system_audio_access` can't
+tell), and the output device was the default speakers. The cause: the dev
+shell's `vad_config.enabled` was `false`, i.e. the popover's
+**Auto-detect | Manual** switch was on Manual, where audio is only processed
+after pressing Enter in the panel. The mode shortcuts now call
+`startCapture({ autoDetect: true })`, which switches back to Auto-detect.
+
 ### 11.7 Not verified by ear
 
 Same caveat as §8: nobody could play audio here. The judge was verified
