@@ -46,7 +46,15 @@ rm -rf "$DEST"
 mv "$DEST.new" "$DEST"
 cd "$DEST/macos"
 rm -rf "$APP_NAME"
-tar -xzf "${APP_NAME}.tar.gz"
+if [ -f "${APP_NAME}.tar.gz" ]; then
+  tar -xzf "${APP_NAME}.tar.gz"
+else
+  # No updater tarball (dev shell): take the app out of the DMG instead
+  DMG=$(ls "$DEST"/dmg/*.dmg | head -1)
+  MNT=$(hdiutil attach -nobrowse -readonly "$DMG" | awk -F'\t' '/\/Volumes\//{print $NF}')
+  cp -R "$MNT/$APP_NAME" .
+  hdiutil detach "$MNT" -quiet
+fi
 codesign --force --deep --sign "$IDENTITY" --timestamp=none "$APP_NAME"
 codesign --verify --deep --strict "$APP_NAME"
 
