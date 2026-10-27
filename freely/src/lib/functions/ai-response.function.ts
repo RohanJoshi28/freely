@@ -110,9 +110,13 @@ export async function* fetchAIResponse(params: {
         selectedProvider.variables?.MODEL ||
         selectedProvider.variables?.model;
 
-      // Claude Code uses --resume for session continuity — skip history to avoid wasted work.
-      // Codex and Gemini need history injected into the prompt (no --resume equivalent).
-      const needsHistory = selectedProvider.provider !== "claude-code";
+      // Claude Code resumes its own session when there is a conversation id,
+      // so history is skipped then. Without one (live system audio), each
+      // call is a fresh session and the history must go in the prompt, or
+      // Claude only ever sees the latest transcript. Codex and Gemini always
+      // need it (no --resume equivalent).
+      const needsHistory =
+        selectedProvider.provider !== "claude-code" || !conversationId;
 
       yield* freelyAgentOrchestrator.execute({
         toolType: selectedProvider.provider as AgentProviderId,

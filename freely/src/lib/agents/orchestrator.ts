@@ -7,7 +7,7 @@
  *
  * Architecture:
  * - Each provider is backed by a Freely tool adapter (FreelyClaudeTool, etc.)
- * - Claude: uses `--resume` for session continuity (no history prepending needed)
+ * - Claude: uses `--resume` when given a session id; otherwise history is injected
  * - Codex/Gemini: use history injection as fallback (CLIs lack resume support)
  * - Actual CLI execution happens via Tauri invoke → Rust sidecar
  */
@@ -135,15 +135,23 @@ export class FreelyAgentOrchestrator {
 
   // ---------------------------------------------------------------------------
   // History injection fallback for CLIs that lack --resume (Codex, Gemini).
-  // Claude uses --resume instead, so this is NOT used for Claude.
+  // Also used for Claude calls that have no session id (live system audio).
   // ---------------------------------------------------------------------------
   private buildPromptWithHistory(params: AgentExecuteParams): string {
     if (!params.history?.length) return params.userMessage;
 
-    const MAX_HISTORY_MESSAGES = 20;
+    // A live conversation produces many short transcript lines, so the cap
+    // is on characters (~15k tokens), not on a message count
+    const MAX_HISTORY_CHARS = 60_000;
+    let used = 0;
+    const recent: typeof params.history = [];
+    for (let i = params.history.length - 1; i >= 0; i--) {
+      used += params.history[i].content.length;
+      if (used > MAX_HISTORY_CHARS && recent.length) break;
+      recent.unshift(params.history[i]);
+    }
 
-    const historyBlock = params.history
-      .slice(-MAX_HISTORY_MESSAGES)
+    const historyBlock = recent
       .map((m) => {
         // Escape closing tags to prevent content from breaking the XML-like structure
         const sanitized = m.content.replace(/<\//g, '&lt;/');
@@ -184,11 +192,14 @@ export class FreelyAgentOrchestrator {
 
     const callbacks = buildStreamingCallbacks(enqueue, finish, params.signal);
 
-    // Claude uses --resume with the CLI's own session ID for conversation continuity.
-    // Only the current userMessage is sent — Claude CLI maintains full history internally.
+    // With a session id, Claude resumes its own session and only the current
+    // userMessage is sent. Callers without one pass history instead.
+    const prompt = params.history?.length
+      ? this.buildPromptWithHistory(params)
+      : params.userMessage;
     try {
       this.claudeTool
-        .executePromptWithStreaming(sessionId, params.userMessage, undefined, undefined, callbacks, undefined, params.model, params.systemPrompt)
+        .executePromptWithStreaming(sessionId, prompt, undefined, undefined, callbacks, undefined, params.model, params.systemPrompt)
         .then((result) => {
           if (result.error) finish(new Error(result.error));
           else finish();
