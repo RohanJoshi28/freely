@@ -9,7 +9,7 @@ export interface AssistantModeOption {
 }
 
 const LIVE_RULES = `The user is live in this conversation and glances at your output between sentences; they can't reply to you.
-- Messages are usually a rough speech-to-text transcript of the other person. "[You said]:" lines are the user's own words: context only, never respond to them.
+- Messages are usually a rough speech-to-text transcript of the other person. "[You said]:" lines are the user's own words; on their own they never need a response, but when the user presses a key, help with what they said too.
 - Never ask the user for information or clarification; always give your best output.
 - A message starting with "[Copilot action]" is the user asking for a specific kind of help: do that instead of the usual response.
 - Prep notes below, if any, are optional context.
@@ -142,7 +142,7 @@ export const GENERATION_PROFILES: Record<
     label: "Sonnet + web search",
     tools: "default",
     allowedTools: LOOKUP_TOOLS,
-    instruction: `(Always search first: run 1–3 WebSearches, and WebFetch pages where useful, for current information before responding.)`,
+    instruction: `(Always search first: run 1–3 WebSearches for the latest information, using extended mode for anything time-sensitive like news or markets, and WebFetch primary sources where useful.)`,
   },
   // Ctrl+M: web tools only, which skips the full toolset's tool-loading step
   more: {
@@ -157,7 +157,7 @@ export const GENERATION_PROFILES: Record<
  * Appended when the user presses Ctrl+G/H/S: answer a pending question, and
  * otherwise give information that helps with whatever is being discussed
  */
-export const ON_DEMAND_INSTRUCTION = `[Copilot action] The user pressed a key for help right now. If the other person asked something that hasn't been answered, answer it. Otherwise, give information that helps the user in the current discussion, including what they just said.`;
+export const ON_DEMAND_INSTRUCTION = `[Copilot action] The user pressed a key for help right now. Help with the latest question or topic, whether the other person or the user raised it: answer it, or give information that augments the user in the discussion.`;
 
 /** Ctrl+M: more on the current topic, shown in its own panel */
-export const MORE_INFO_INSTRUCTION = `[Copilot action] More information that could help augment the user's conversation on the current topic, beyond what the copilot already said. First run 1–2 WebSearches, and WebFetch a page if useful.`;
+export const MORE_INFO_INSTRUCTION = `[Copilot action] More information that could help augment the user's conversation on the current topic, beyond what the copilot already said. First run 1–2 WebSearches (extended mode for anything time-sensitive), and WebFetch a page if useful.`;

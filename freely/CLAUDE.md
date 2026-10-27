@@ -718,6 +718,26 @@ should already be running the moment freely is open."
   suffix). `generateMessageId` itself is unchanged: the chat hooks rebuild the
   same id per streamed chunk.
 
+### 11.16 "Answer my question" and stale search results
+
+Rohan: "when I asked a question, I was sparking a discussion and it should
+pull information to augment me (answer the question) … it gave old
+information instead of performing the web search like it should".
+
+- The first Ctrl+S was sent with **no conversation**: the user had just
+  stopped talking, so their mic segment was still being transcribed; the
+  flush only handled speech in progress. `MicListener` now tracks in-flight
+  transcriptions and the flush waits for them (≤4 s); `addUserUtterance`
+  also updates `conversationRef` immediately so the request sees the line.
+- `LIVE_RULES` said "[You said]" lines are "context only, never respond to
+  them", so Claude refused to engage with the user's own question. Now: they
+  never need a response on their own, but on a key press help with them too.
+  `ON_DEMAND_INSTRUCTION`: help with the latest question or topic, whoever
+  raised it.
+- Searches returned 2024/2025 pages and Claude hedged. The search
+  instructions now ask for WebSearch's extended mode for time-sensitive
+  topics; 2/2 test runs then returned current facts (16–17 s).
+
 ### 11.7 Not verified by ear
 
 Same caveat as §8: nobody could play audio here. The judge was verified

@@ -1589,19 +1589,23 @@ export function useSystemAudio() {
         return;
       }
       const timestamp = Date.now();
+      const message: ChatMessage = {
+        id: liveMessageId("user", timestamp),
+        role: "user",
+        content: text,
+        timestamp,
+        audioSource: "mic",
+        speakerLabel: "user",
+      };
+      // Visible to a request made right now (a key press waiting on this
+      // transcription), before React re-renders
+      conversationRef.current = {
+        ...conversationRef.current,
+        messages: [message, ...conversationRef.current.messages],
+      };
       setConversation((prev) => ({
         ...prev,
-        messages: [
-          {
-            id: liveMessageId("user", timestamp),
-            role: "user" as const,
-            content: text,
-            timestamp,
-            audioSource: "mic" as const,
-            speakerLabel: "user" as const,
-          },
-          ...prev.messages,
-        ],
+        messages: [message, ...prev.messages],
         updatedAt: timestamp,
       }));
       const id = `you-${timestamp}`;

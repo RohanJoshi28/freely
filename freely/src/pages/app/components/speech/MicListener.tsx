@@ -26,89 +26,73 @@ export const MicListener = ({ onUserSpeech, flushRef }: MicListenerProps) => {
   const segmentStartRef = useRef(0);
   const onUserSpeechRef = useRef(onUserSpeech);
   onUserSpeechRef.current = onUserSpeech;
-  // Flush bookkeeping: did a submitted segment start, and who to tell when done
-  const flushingRef = useRef(false);
-  const segmentStartedRef = useRef(false);
-  const flushDoneRef = useRef<(() => void) | null>(null);
-  const finishFlush = () => {
-    flushDoneRef.current?.();
-    flushDoneRef.current = null;
-  };
+  // Transcriptions still running, so a flush can wait for them
+  const inFlightRef = useRef(new Set<Promise<void>>());
 
   const micId = selectedAudioDevices.input.id;
   const audioConstraints: MediaTrackConstraints =
     micId && micId !== "default" ? { deviceId: { exact: micId } } : {};
+
+  const transcribe = async (audio: Float32Array, startedAt: number) => {
+    const wav = floatArrayToWav(audio, 16000, "wav");
+    try {
+      // Your own words are context only, so the local model is accurate
+      // enough and keeps the cloud STT quota for the other person
+      let text = "";
+      if (isLocalWhisperReady()) {
+        text = await transcribeLocally(wav);
+      } else {
+        const providerConfig = allSttProviders.find(
+          (p) => p.id === selectedSttProvider.provider,
+        );
+        if (!providerConfig) return;
+        const result = await fetchSTT({
+          provider: providerConfig,
+          selectedProvider: selectedSttProvider,
+          audio: wav,
+          source: "mic",
+        });
+        text = result.text.trim();
+      }
+      if (text) onUserSpeechRef.current(text, startedAt);
+    } catch (err) {
+      console.error("Mic transcription failed:", err);
+    }
+  };
 
   const vad = useMicVAD({
     userSpeakingThreshold: 0.6,
     startOnLoad: true,
     // Pausing hands over the speech so far (used by the flush below)
     submitUserSpeechOnPause: true,
-    onVADMisfire: finishFlush,
     additionalAudioConstraints: audioConstraints,
     onSpeechStart: () => {
       segmentStartRef.current = Date.now();
     },
-    onSpeechEnd: async (audio) => {
-      segmentStartedRef.current = true;
+    onSpeechEnd: (audio) => {
       const startedAt = segmentStartRef.current;
-      const wav = floatArrayToWav(audio, 16000, "wav");
-
-      try {
-        // Your own words are context only, so the local model is accurate
-        // enough and keeps the cloud STT quota for the other person
-        let text = "";
-        if (isLocalWhisperReady()) {
-          text = await transcribeLocally(wav);
-        } else {
-          const providerConfig = allSttProviders.find(
-            (p) => p.id === selectedSttProvider.provider,
-          );
-          if (!providerConfig) return;
-          const result = await fetchSTT({
-            provider: providerConfig,
-            selectedProvider: selectedSttProvider,
-            audio: wav,
-            source: "mic",
-          });
-          text = result.text.trim();
-        }
-        if (text) onUserSpeechRef.current(text, startedAt);
-      } catch (err) {
-        console.error("Mic transcription failed:", err);
-      } finally {
-        finishFlush();
-      }
+      const job = transcribe(audio, startedAt);
+      inFlightRef.current.add(job);
+      job.finally(() => inFlightRef.current.delete(job));
     },
   });
   const vadRef = useRef(vad);
   vadRef.current = vad;
 
-  // Submit whatever the user is saying now and wait until it is transcribed
+  // Submit whatever the user is saying now, then wait for it and any
+  // transcription already running (they may have just stopped talking)
   useEffect(() => {
     if (!flushRef) return;
-    flushRef.current = () => {
-      if (flushingRef.current) return Promise.resolve();
-      flushingRef.current = true;
-      segmentStartedRef.current = false;
-      return new Promise<void>((resolve) => {
-        const done = () => {
-          clearTimeout(cap);
-          flushingRef.current = false;
-          resolve();
-        };
-        const cap = setTimeout(done, 4000);
-        flushDoneRef.current = done;
-        vadRef.current.pause();
-        vadRef.current.start();
-        // Nothing was being said: no segment to wait for
-        setTimeout(() => {
-          if (!segmentStartedRef.current && flushDoneRef.current === done) {
-            flushDoneRef.current = null;
-            done();
-          }
-        }, 200);
-      });
+    flushRef.current = async () => {
+      vadRef.current.pause();
+      vadRef.current.start();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const pending = [...inFlightRef.current];
+      if (!pending.length) return;
+      await Promise.race([
+        Promise.allSettled(pending),
+        new Promise((resolve) => setTimeout(resolve, 4000)),
+      ]);
     };
     return () => {
       flushRef.current = null;
