@@ -174,6 +174,30 @@ const base64ToWavBlob = (base64Audio: string): Blob => {
   return new Blob([bytes], { type: "audio/wav" });
 };
 
+/**
+ * Subscribe to a Tauri event; the returned cleanup works even if it runs
+ * before listen() resolves. React StrictMode runs effects twice in
+ * development, and the plain `listen().then(...)` pattern leaked the first
+ * listener there, so every event was handled twice.
+ */
+const subscribe = <T>(
+  event: string,
+  handler: (event: { payload: T }) => void,
+): (() => void) => {
+  let unlisten: (() => void) | undefined;
+  let cancelled = false;
+  listen<T>(event, handler)
+    .then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    })
+    .catch((err) => console.error(`Failed to listen for ${event}:`, err));
+  return () => {
+    cancelled = true;
+    unlisten?.();
+  };
+};
+
 const withTimeout = <T>(promise: Promise<T>, ms: number, message: string) =>
   Promise.race([
     promise,
@@ -395,68 +419,40 @@ export function useSystemAudio() {
 
   // Handle continuous recording progress events AND error events
   useEffect(() => {
-    let progressUnlisten: (() => void) | undefined;
-    let startUnlisten: (() => void) | undefined;
-    let stopUnlisten: (() => void) | undefined;
-    let errorUnlisten: (() => void) | undefined;
-    let discardedUnlisten: (() => void) | undefined;
-
-    const setupContinuousListeners = async () => {
-      try {
-        // Progress updates (every second)
-        progressUnlisten = await listen("recording-progress", (event) => {
-          const seconds = event.payload as number;
-          setRecordingProgress(seconds);
-        });
-
-        // Recording started
-        startUnlisten = await listen("continuous-recording-start", () => {
-          setRecordingProgress(0);
-          setIsRecordingInContinuousMode(true);
-        });
-
-        // Recording stopped
-        stopUnlisten = await listen("continuous-recording-stopped", () => {
-          setRecordingProgress(0);
-          setIsRecordingInContinuousMode(false);
-        });
-
-        // Audio encoding errors
-        errorUnlisten = await listen("audio-encoding-error", (event) => {
-          const errorMsg = event.payload as string;
-          console.error("Audio encoding error:", errorMsg);
-          setError(`Failed to process audio: ${errorMsg}`);
-          setIsProcessing(false);
-          setIsAIProcessing(false);
-          setIsRecordingInContinuousMode(false);
-        });
-
-        // Speech discarded (too short)
-        discardedUnlisten = await listen("speech-discarded", (event) => {
-          systemSpeechActiveRef.current = false;
-          const segment = liveSegmentRef.current;
-          if (segment !== null) removeLine(`them-${segment}`);
-          liveSegmentRef.current = null;
-          // A held fragment was waiting for more speech that never came
-          if (pendingFragmentRef.current && !waitTimerRef.current) {
-            scheduleWaitFallbackRef.current();
-          }
-          console.log("Speech discarded:", event.payload as string);
-        });
-      } catch (err) {
-        console.error("Failed to setup continuous recording listeners:", err);
-      }
-    };
-
-    setupContinuousListeners();
-
-    return () => {
-      if (progressUnlisten) progressUnlisten();
-      if (startUnlisten) startUnlisten();
-      if (stopUnlisten) stopUnlisten();
-      if (errorUnlisten) errorUnlisten();
-      if (discardedUnlisten) discardedUnlisten();
-    };
+    const cleanups = [
+      // Progress updates (every second)
+      subscribe<number>("recording-progress", (event) => {
+        setRecordingProgress(event.payload);
+      }),
+      subscribe("continuous-recording-start", () => {
+        setRecordingProgress(0);
+        setIsRecordingInContinuousMode(true);
+      }),
+      subscribe("continuous-recording-stopped", () => {
+        setRecordingProgress(0);
+        setIsRecordingInContinuousMode(false);
+      }),
+      subscribe<string>("audio-encoding-error", (event) => {
+        console.error("Audio encoding error:", event.payload);
+        setError(`Failed to process audio: ${event.payload}`);
+        setIsProcessing(false);
+        setIsAIProcessing(false);
+        setIsRecordingInContinuousMode(false);
+      }),
+      // Speech discarded (too short)
+      subscribe<string>("speech-discarded", (event) => {
+        systemSpeechActiveRef.current = false;
+        const segment = liveSegmentRef.current;
+        if (segment !== null) removeLine(`them-${segment}`);
+        liveSegmentRef.current = null;
+        // A held fragment was waiting for more speech that never came
+        if (pendingFragmentRef.current && !waitTimerRef.current) {
+          scheduleWaitFallbackRef.current();
+        }
+        console.log("Speech discarded:", event.payload);
+      }),
+    ];
+    return () => cleanups.forEach((cleanup) => cleanup());
   }, []);
 
   // AI Processing function
@@ -753,48 +749,45 @@ export function useSystemAudio() {
 
   // System audio events: finished segments, live partials, speech starts
   useEffect(() => {
-    const unlisteners: Array<() => void> = [];
-
-    listen<string>("speech-detected", (event) => {
-      handleSpeechDetectedRef.current(event.payload);
-    }).then((fn) => unlisteners.push(fn));
-
-    // Track when the other person starts talking (mic bleed filter, live
-    // transcript line, and holding a "wait" fragment open)
-    listen<number | null>("speech-start", (event) => {
-      systemSpeechActiveRef.current = true;
-      lastSystemSpeechStartRef.current = Date.now();
-      clearWaitTimer();
-      if (typeof event.payload === "number") {
-        liveSegmentRef.current = event.payload;
-      }
-    }).then((fn) => unlisteners.push(fn));
-
-    listen<{ segment_id: number; text: string }>(
-      "transcript-partial",
-      (event) => {
-        const { segment_id, text } = event.payload;
-        if (segment_id !== liveSegmentRef.current || !capturingRef.current) {
-          return;
+    const cleanups = [
+      subscribe<string>("speech-detected", (event) => {
+        handleSpeechDetectedRef.current(event.payload);
+      }),
+      // Track when the other person starts talking (mic bleed filter, live
+      // transcript line, and holding a "wait" fragment open)
+      subscribe<number | null>("speech-start", (event) => {
+        systemSpeechActiveRef.current = true;
+        lastSystemSpeechStartRef.current = Date.now();
+        clearWaitTimer();
+        if (typeof event.payload === "number") {
+          liveSegmentRef.current = event.payload;
         }
-        const cleaned = cleanLocalTranscript(text);
-        if (!cleaned) return;
-        const id = `them-${segment_id}`;
-        upsertLine(
-          id,
-          { text: cleaned },
-          {
+      }),
+      subscribe<{ segment_id: number; text: string }>(
+        "transcript-partial",
+        (event) => {
+          const { segment_id, text } = event.payload;
+          if (segment_id !== liveSegmentRef.current || !capturingRef.current) {
+            return;
+          }
+          const cleaned = cleanLocalTranscript(text);
+          if (!cleaned) return;
+          const id = `them-${segment_id}`;
+          upsertLine(
             id,
-            speaker: "them",
-            text: cleaned,
-            status: "live",
-            timestamp: Date.now(),
-          },
-        );
-      },
-    ).then((fn) => unlisteners.push(fn));
-
-    return () => unlisteners.forEach((fn) => fn());
+            { text: cleaned },
+            {
+              id,
+              speaker: "them",
+              text: cleaned,
+              status: "live",
+              timestamp: Date.now(),
+            },
+          );
+        },
+      ),
+    ];
+    return () => cleanups.forEach((cleanup) => cleanup());
   }, [upsertLine]);
 
   // Context management functions
@@ -1356,25 +1349,23 @@ export function useSystemAudio() {
   const quickActionRef = useRef(handleQuickActionClick);
   quickActionRef.current = handleQuickActionClick;
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listen("speech-flush-empty", () => {
-      const profileId = forceProfileRef.current ?? "sonnet";
-      forceProfileRef.current = null;
-      // A held fragment is exactly what "generate now" should answer
-      if (pendingFragmentRef.current) {
-        clearWaitTimer();
-        const pending = pendingFragmentRef.current;
-        pendingFragmentRef.current = "";
-        respondToRef.current(pending, profileId, true);
-        return;
-      }
-      quickActionRef.current(ON_DEMAND_INSTRUCTION, profileId);
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => unlisten?.();
-  }, []);
+  useEffect(
+    () =>
+      subscribe("speech-flush-empty", () => {
+        const profileId = forceProfileRef.current ?? "sonnet";
+        forceProfileRef.current = null;
+        // A held fragment is exactly what "generate now" should answer
+        if (pendingFragmentRef.current) {
+          clearWaitTimer();
+          const pending = pendingFragmentRef.current;
+          pendingFragmentRef.current = "";
+          respondToRef.current(pending, profileId, true);
+          return;
+        }
+        quickActionRef.current(ON_DEMAND_INSTRUCTION, profileId);
+      }),
+    [],
+  );
   const respondToRef = useRef(respondTo);
   respondToRef.current = respondTo;
 

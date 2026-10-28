@@ -13,6 +13,11 @@ let globalEventListeners: {
   registrationError?: UnlistenFn;
 } = {};
 
+// Setups run one after another: several hooks use this one, StrictMode runs
+// each effect twice, and overlapping async setups each registered their own
+// listeners before seeing the others', so every shortcut fired repeatedly
+let globalSetupChain: Promise<void> = Promise.resolve();
+
 // Global debounce for screenshot events to prevent duplicates
 let lastScreenshotEventTime = 0;
 
@@ -252,7 +257,7 @@ export const useGlobalShortcuts = () => {
       }
     };
 
-    setupEventListeners();
+    globalSetupChain = globalSetupChain.then(setupEventListeners);
   }, []);
 
   return {
